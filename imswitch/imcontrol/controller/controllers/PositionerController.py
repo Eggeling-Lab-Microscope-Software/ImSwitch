@@ -23,6 +23,7 @@ class PositionerController(ImConWidgetController):
             speed = hasattr(pManager, 'speed')
             self._widget.addPositioner(pName, pManager.axes, speed)
             for axis in pManager.axes:
+                self._widget.updatePosition(pName, axis, pManager.position[axis])
                 self.setSharedAttr(pName, axis, _positionAttr, pManager.position[axis])
                 if speed:
                     self.setSharedAttr(pName, axis, _positionAttr, pManager.speed)
@@ -102,7 +103,6 @@ class PositionerController(ImConWidgetController):
 
     def stepPositionerDown(self, name: str, axis: str, step: float):
         self.move(name, axis, -step)
-
 
     def setXYPosition(self, x, y):
         positionerX = self.getPositionerNames()[0]
