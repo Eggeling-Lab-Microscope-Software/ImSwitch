@@ -1,6 +1,7 @@
 from imswitch.imcommon.framework import SignalInterface
 from imswitch.imcommon.model import initLogger
-from typing import Any, Union
+from typing import Union
+from copy import deepcopy
 import pymmcore
 
 PropertyValue = Union[bool, float, int, str]
@@ -119,6 +120,8 @@ class PyMMCoreManager(SignalInterface):
         Returns:
             the dictionary with the new [axis, position] assignment.
         """
+        # we make a deepcopy of the old positions dictionary
+        # in case a RuntimeError occurs
         if stageType == "single":
             self.__core.setPosition(label, positions[axis])
             positions[axis] = self.__core.getPosition(label)

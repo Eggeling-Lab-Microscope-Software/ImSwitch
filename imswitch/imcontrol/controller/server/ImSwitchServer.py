@@ -1,5 +1,6 @@
 import Pyro5
 import Pyro5.server
+import numpy as np
 from imswitch.imcommon.framework import Worker
 from imswitch.imcommon.model import initLogger
 from ._serialize import register_serializers
@@ -13,7 +14,7 @@ class ImSwitchServer(Worker):
     def __init__(self, channel, setupInfo):
         super().__init__()
 
-        self.__logger = initLogger(self, tryInheritParent=True)
+        self.__logger = initLogger(self)
         self._channel = channel
         self._name = setupInfo.pyroServerInfo.name
         self._host = setupInfo.pyroServerInfo.host
@@ -113,12 +114,42 @@ class ImSwitchServer(Worker):
         pass
 
     @Pyro5.server.expose
-    def stepUp(self, name: str, axis: str, step: float):
-        self._channel.sigStepPositionerUp.emit(name, axis, step)
-    
-    @Pyro5.server.expose
-    def stepDown(self, name: str, axis: str, step: float):
-        self._channel.sigStepPositionerDown.emit(name, axis, step)
+    @Pyro5.server.oneway
+    def generateMedianFilter(self, detectorName: str, positionersDict: dict, step: float, frameNumber: int):
+        """ Generates a median filter based on the positioners feeded by positionersDict, collecting images
+        from detectorName. """
+        self.__logger.info("[MedianFilter] Generating median filter...")
+        wasAcquiring = False
+        try:
+            self._channel.setDetectorAcquisition(detectorName, True)
+        except:
+            wasAcquiring = True
+        buffer = []
+        # we generate a square movement on the X-Y axis
+        # we need to make sure that the maximum number of frames
+        # is coherent (must be divisible by 4)
+        residual = frameNumber % 4
+        if residual != 0:
+            frameNumber = frameNumber + (4 - frameNumber % 4)
+            frameNumber += residual
+            self.__logger.warning(f"[MedianFilter] Adjusted maximum number of frames to {frameNumber}")
+        movementList = ["X", "Y", "-X", "-Y"]
+        movements = int(frameNumber / 4)
+        for ax in movementList:
+            if not "-" in ax:
+                for _ in range(movements):
+                    self._channel.pyroStepPositionerUp(positionersDict[ax], ax, step)
+                    buffer.append(self._channel.get_image(detectorName))
+            else:
+                ax = ax.replace("-", "")
+                for _ in range(movements):
+                    self._channel.pyroStepPositionerDown(positionersDict[ax], ax, step)
+                    buffer.append(self._channel.get_image(detectorName))
+        if not wasAcquiring:
+            self._channel.setDetectorAcquisition(detectorName, False)
+        self._channel.sigUpdateImgProcessing.emit(detectorName, "medianFilter", np.median(np.stack(buffer), axis=0))
+        self.__logger.info("[MedianFilter] ... done!")
+
 
 # Copyright (C) 2021, Talley Lambert
 # All rights reserved.

@@ -33,9 +33,7 @@ class PositionerController(ImConWidgetController):
         self._commChannel.sigSetXYPosition.connect(lambda x, y: self.setXYPosition(x, y))
         self._commChannel.sigSetZPosition.connect(lambda z: self.setZPosition(z))
         self._commChannel.sigSetSpeed.connect(lambda speed: self.setSpeedGUI(speed))
-        
-        self._commChannel.sigStepPositionerUp.connect(self.stepPositionerUp)
-        self._commChannel.sigStepPositionerDown.connect(self.stepPositionerDown)
+        self._commChannel.sigUpdateImgProcessing.connect(self.updateImageProcessing)
 
         # Connect PositionerWidget signals
         self._widget.sigStepUpClicked.connect(self.stepUp)
@@ -81,6 +79,9 @@ class PositionerController(ImConWidgetController):
         newPos = self._master.positionersManager[positionerName].position[axis]
         self._widget.updatePosition(positionerName, axis, newPos)
         self.setSharedAttr(positionerName, axis, _positionAttr, newPos)
+    
+    def updateImageProcessing(self, detectorName, param, object):
+        self._master.detectorsManager[detectorName].updateImageProcessing(param, object)
 
     def attrChanged(self, key, value):
         if self.settingAttr or len(key) != 4 or key[0] != _attrCategory:
@@ -98,10 +99,10 @@ class PositionerController(ImConWidgetController):
         finally:
             self.settingAttr = False
     
-    def stepPositionerUp(self, name: str, axis: str, step: float):
+    def pyroStepPositionerUp(self, name: str, axis: str, step: float):
         self.move(name, axis, step)
 
-    def stepPositionerDown(self, name: str, axis: str, step: float):
+    def pyroStepPositionerDown(self, name: str, axis: str, step: float):
         self.move(name, axis, -step)
 
     def setXYPosition(self, x, y):

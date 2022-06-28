@@ -4,6 +4,7 @@ from typing import Mapping
 import numpy as np
 from imswitch.imcommon.framework import Signal, SignalInterface, Thread
 from imswitch.imcommon.model import pythontools, APIExport, SharedAttributes
+from imswitch.imcommon.model import initLogger
 from .server import ImSwitchServer
 
 
@@ -91,8 +92,7 @@ class CommunicationChannel(SignalInterface):
     sigSetExposure = Signal(float)
     sigSetSpeed = Signal(float)
 
-    sigStepPositionerUp = Signal(str, str, float) # positionerName, axis, stepSize
-    sigStepPositionerDown = Signal(str, str, float) # positionerName, axis, stepSize
+    sigUpdateImgProcessing = Signal(str, str, object) # detectorName, param, object
 
     @property
     def sharedAttrs(self):
@@ -100,6 +100,7 @@ class CommunicationChannel(SignalInterface):
 
     def __init__(self, main, setupInfo):
         super().__init__()
+        self.__logger = initLogger(self)
         self.__main = main
         self.__sharedAttrs = SharedAttributes()
         self._serverWorker = ImSwitchServer(self, setupInfo)
@@ -130,6 +131,15 @@ class CommunicationChannel(SignalInterface):
 
     def get_image(self, detectorName=None):
         return self.__main.controllers['View'].get_image(detectorName)
+    
+    def pyroStepPositionerUp(self, positionerName: str, axis: str, step: float):
+        self.__main.controllers["Positioner"].pyroStepPositionerUp(positionerName, axis, step)
+        
+    def pyroStepPositionerDown(self, positionerName: str, axis: str, step: float):
+        self.__main.controllers["Positioner"].pyroStepPositionerDown(positionerName, axis, step)
+    
+    def setDetectorAcquisition(self, detectorName: str, acquisitionStatus: bool):
+        self.__main.controllers["View"].setDetectorAcquisition(detectorName, acquisitionStatus)
 
     @APIExport()
     def signals(self) -> Mapping[str, Signal]:

@@ -42,20 +42,15 @@ class XimeaManager(DetectorManager):
             self._camera.set_param(propertyName, propertyValue)
         
         server = detectorInfo.managerProperties["server"]
+        self.__uri = None
 
-        try:
-            if server is None:
-                self.__proxy = None
-            elif server == "default":
-                uri = Pyro5.api.URI("PYRO:ImSwitchServer@127.0.0.1:54333")
-                self.__proxy = Pyro5.api.Proxy(uri)
-            else:
-                uri_str = "PYRO:ImSwitchServer@" + server
-                uri = Pyro5.api.URI(uri_str)
-                self.__proxy = Pyro5.api.Proxy(uri)
-        except:
-            self.__logger.warning("Failed to connect to ImSwitchServer")
-            self.__proxy = None
+        if server is None:
+            self.__uri = None
+        elif server == "default":
+            self.__uri = Pyro5.api.URI("PYRO:ImSwitchServer@127.0.0.1:54333")
+        else:
+            uri_str = "PYRO:ImSwitchServer@" + server
+            self.__uri = Pyro5.api.URI(uri_str)
 
         # gather parameters for median filter control
         try:
@@ -70,7 +65,7 @@ class XimeaManager(DetectorManager):
 
         # prepare parameters
         parameters = {
-            'Exposure': DetectorNumberParameter(group='Timings', value=1e-3,
+            'Exposure': DetectorNumberParameter(group='Timings', value=100e-6,
                                                          valueUnits='s', editable=True),
 
             'Trigger source': DetectorListParameter(group='Trigger settings',
@@ -103,7 +98,7 @@ class XimeaManager(DetectorManager):
         }
 
         actions = {}
-        if (self.__proxy is not None
+        if (self.__uri is not None
                 and self.__mfPositioners is not None
                 and self.__mfStep is not None
                 and self.__mfMaxFrames is not None):
@@ -129,8 +124,8 @@ class XimeaManager(DetectorManager):
     def getLatestFrame(self, is_save=False):
         self._camera.get_image(self._img)
         data = self._img.get_image_data_numpy()
-        if self._median is not None:
-            data = np.subtract(data, self._median, dtype=np.float32)
+        if "medianFilter" in self.imageProcessing:
+            data = np.subtract(data.astype(np.float32), self.imageProcessing["medianFilter"].astype(np.float32), dtype=np.float32)
         return data
 
     def getChunk(self):
@@ -274,33 +269,13 @@ class XimeaManager(DetectorManager):
         return camera, image
 
     def _generateMedianFilter(self):
-        self.__logger.warning("Generating median filter...")
-        with self._camera_enabled():
-            buffer = []
-            # we generate a square movement on the X-Y axis
-            # we need to make sure that the maximum number of frames
-            # is coherent (must be divisible by 4)
-            residual = self.__mfMaxFrames % 4
-            if residual != 0:
-                self.__logger.warning(f"Adjusting maximum number of frames to {residual + self.__mfMaxFrames}")
-                self.__mfMaxFrames += residual
-                super().setParameter("Number of frames", self.__mfMaxFrames)
-            movementList = ["X", "Y", "-X", "-Y"]
-            movements = int(self.__mfMaxFrames / 4)
-            for ax in movementList:
-                if not "-" in ax:
-                    for _ in range(movements):
-                        self.__proxy.stepUp(self.__mfPositioners[ax], ax,  self.__mfStep)
-                        buffer.append(self.getLatestFrame())
-                else:
-                    ax = ax.replace("-", "")
-                    for _ in range(movements):
-                        self.__proxy.stepDown(self.__mfPositioners[ax], ax,  self.__mfStep)
-                        buffer.append(self.getLatestFrame())
-        
-        self._median = np.median(np.stack(buffer), axis=0)
-        self.__logger.warning("... done!")
+        if self.__uri is not None:
+            try:
+                with Pyro5.api.Proxy(self.__uri) as proxy:
+                    proxy.generateMedianFilter(self.name, self.__mfPositioners, self.__mfStep, self.__mfMaxFrames)
+            except Exception as e:
+                self.__logger.error(f"Could not connect proxy to ImSwitchServer. Error: {e}")
     
     def _clearMedianFilter(self):
-        self.__logger.warning("Clearing median filter")
-        self._median = None
+        self.__logger.info("Clearing median filter")
+        self.imageProcessing.pop("medianFilter", None)

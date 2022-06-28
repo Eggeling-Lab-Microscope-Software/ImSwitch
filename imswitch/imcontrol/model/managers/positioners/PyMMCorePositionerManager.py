@@ -69,14 +69,18 @@ class PyMMCorePositionerManager(PositionerManager):
         super().__init__(positionerInfo, name, initialPosition)
     
     def setPosition(self, position: float, axis: str) -> None:
-        self.__logger.warning(f"Moving of {position} on {axis} axis")
-        self._position[axis] = position
-        self._position = self.__coreManager.setStagePosition(
-            self.name,
-            self.__stageType,
-            axis,
-            self.position
-        )
+        try:
+            oldPosition = self.position[axis]
+            self._position[axis] = position
+            self._position = self.__coreManager.setStagePosition(
+                self.name,
+                self.__stageType,
+                axis,
+                self.position
+            )
+        except RuntimeError:
+            self.__logger.error(f"Invalid position requested ({self.name} -> ({axis} : {position})")
+            self._position[axis] = oldPosition
     
     def setSpeed(self, speed: float) -> None:
         # check if speed property exists

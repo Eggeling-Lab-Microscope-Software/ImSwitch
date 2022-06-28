@@ -110,6 +110,11 @@ class DetectorManager(SignalInterface):
 
         self.setBinning(supportedBinnings[0])
 
+        self.__imgProcessing = {}
+    
+    def updateImageProcessing(self, param, object):
+        self.__imgProcessing[param] = object
+
     def updateLatestFrame(self, init):
         """ :meta private: """
         try:
@@ -204,6 +209,11 @@ class DetectorManager(SignalInterface):
     def forFocusLock(self) -> bool:
         """ Whether the detector is used for focus lock. """
         return self.__forFocusLock
+    
+    @property
+    def imageProcessing(self) -> dict:
+        """ Returns the dictionary of image processing objects in the detector. """
+        return self.__imgProcessing
 
     @property
     @abstractmethod

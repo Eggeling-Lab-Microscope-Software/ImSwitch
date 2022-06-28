@@ -42,6 +42,15 @@ class ViewController(ImConWidgetController):
             return self._master.detectorsManager.execOnCurrent(lambda c: c.getLatestFrame())
         else:
             return self._master.detectorsManager[detectorName].getLatestFrame()
+    
+    def setDetectorAcquisition(self, detectorName, acquisitionStatus):
+        if detectorName is None:
+            self._master.detectorsManager.execOnCurrent(lambda c: c.startAcquisition() if acquisitionStatus else c.stopAcquisition())
+        else:
+            if acquisitionStatus:
+                self._master.detectorsManager[detectorName].startAcquisition()
+            else:
+                self._master.detectorsManager[detectorName].stopAcquisition()
 
     @APIExport(runOnUIThread=True)
     def setLiveViewActive(self, active: bool) -> None:
