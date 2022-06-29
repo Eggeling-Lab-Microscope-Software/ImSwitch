@@ -107,7 +107,7 @@ class XimeaManager(DetectorManager):
             parameters["Number of frames"] = DetectorNumberParameter(group="Median Filter", value=self.__mfMaxFrames, valueUnits="", editable=True)
 
             actions["Generate median filter"] = DetectorAction(group="Median Filter", func=self._generateMedianFilter)
-            actions["Clear median filter"] = DetectorAction(group="Median Filter", func=self._clearMedianFilter)
+            actions["Clear median filter"] = DetectorAction(group="Median Filter", func=self._clearMedianFilter)   
 
         super().__init__(detectorInfo, name, fullShape=fullShape, supportedBinnings=[1],
                          model=model, parameters=parameters, croppable=True, actions=actions)
@@ -124,8 +124,11 @@ class XimeaManager(DetectorManager):
     def getLatestFrame(self, is_save=False):
         self._camera.get_image(self._img)
         data = self._img.get_image_data_numpy()
+
+        # median filter applied only if exists in dictionary and its enabled
         if "medianFilter" in self.imageProcessing:
-            data = np.subtract(data.astype(np.float32), self.imageProcessing["medianFilter"].astype(np.float32), dtype=np.float32)
+            # data = np.subtract(data.astype(np.float32), self.imageProcessing["medianFilter"].astype(np.float32), dtype=np.float32)
+            data = (data.astype(np.float32) / self.imageProcessing["medianFilter"]["content"].astype(np.float32)).astype(np.float32)
         return data
 
     def getChunk(self):
@@ -203,7 +206,10 @@ class XimeaManager(DetectorManager):
 
     def setParameter(self, name : str, value):
 
-        if name == "Step size" or name == "Number of frames":
+        # TODO: this is horrible,
+        # find a better way of handling this
+        if (name == "Step size" 
+            or name == "Number of frames"):
             if name == "Step size":
                 self.__mfStep = value
             elif name == "Number of frames":
@@ -273,9 +279,11 @@ class XimeaManager(DetectorManager):
             try:
                 with Pyro5.api.Proxy(self.__uri) as proxy:
                     proxy.generateMedianFilter(self.name, self.__mfPositioners, self.__mfStep, self.__mfMaxFrames)
+                self._dtype = "float32"
             except Exception as e:
                 self.__logger.error(f"Could not connect proxy to ImSwitchServer. Error: {e}")
     
     def _clearMedianFilter(self):
         self.__logger.info("Clearing median filter")
         self.imageProcessing.pop("medianFilter", None)
+        self._dtype = "i2"

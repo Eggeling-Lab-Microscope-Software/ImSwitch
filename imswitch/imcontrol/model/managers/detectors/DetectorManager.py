@@ -110,10 +110,11 @@ class DetectorManager(SignalInterface):
 
         self.setBinning(supportedBinnings[0])
 
-        self.__imgProcessing = {}
+        self._imageProcessing = {}
+        self._dtype = "i2"
     
     def updateImageProcessing(self, param, object):
-        self.__imgProcessing[param] = object
+        self._imageProcessing[param] = {"content" : object, "enabled": True}
 
     def updateLatestFrame(self, init):
         """ :meta private: """
@@ -213,7 +214,12 @@ class DetectorManager(SignalInterface):
     @property
     def imageProcessing(self) -> dict:
         """ Returns the dictionary of image processing objects in the detector. """
-        return self.__imgProcessing
+        return self._imageProcessing
+    
+    @property
+    def dtype(self) -> str:
+        """ Returns the image numpy data type for correct recording storage. """
+        return self._dtype
 
     @property
     @abstractmethod

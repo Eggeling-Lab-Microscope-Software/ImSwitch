@@ -262,7 +262,7 @@ class RecordingWorker(Worker):
                 datasets[detectorName] = files[detectorName].create_dataset(
                     datasetName, (1, *reversed(shape)),
                     maxshape=(None, *reversed(shape)),
-                    dtype='i2'
+                    dtype=self.__recordingManager.detectorsManager[detectorName].dtype
                 )
 
                 for key, value in self.attrs[detectorName].items():
