@@ -1,7 +1,6 @@
 from imswitch.imcommon.framework import SignalInterface
 from imswitch.imcommon.model import initLogger
-from typing import Union
-from copy import deepcopy
+from typing import Union, Tuple, Dict
 import pymmcore
 
 PropertyValue = Union[bool, float, int, str]
@@ -42,7 +41,7 @@ class PyMMCoreManager(SignalInterface):
             "Y" : self.__core.getYPosition
         }
     
-    def loadDevice(self, devInfo: tuple[str, str, str]) -> None:
+    def loadDevice(self, devInfo: Tuple[str, str, str]) -> None:
         """ Tries to load a device into the MMCore.
 
         Args:
@@ -108,7 +107,7 @@ class PyMMCoreManager(SignalInterface):
             return self.__getXYStagePosition[axis](label)
         
     
-    def setStagePosition(self, label: str, stageType: str, axis: str, positions: dict[str, float]) -> float:
+    def setStagePosition(self, label: str, stageType: str, axis: str, positions: Dict[str, float]) -> float:
         """ Sets the selected stage position.
 
         Args:

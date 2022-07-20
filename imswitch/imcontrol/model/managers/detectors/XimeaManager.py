@@ -127,7 +127,6 @@ class XimeaManager(DetectorManager):
 
         # median filter applied only if exists in dictionary and its enabled
         if "medianFilter" in self.imageProcessing:
-            # data = np.subtract(data.astype(np.float32), self.imageProcessing["medianFilter"].astype(np.float32), dtype=np.float32)
             data = (data.astype(np.float32) / self.imageProcessing["medianFilter"]["content"].astype(np.float32)).astype(np.float32)
         return data
 
