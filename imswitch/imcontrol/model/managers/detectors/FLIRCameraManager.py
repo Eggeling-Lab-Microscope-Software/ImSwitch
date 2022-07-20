@@ -93,7 +93,7 @@ class FLIRCameraManager(DetectorManager):
                                                     editable=True,
                                                     options=list(self.pixelFormat.keys())),
             "ADC bit depth" : DetectorListParameter(group="Device settings",
-                                                    value="10 bit",
+                                                    value="12 bit",
                                                     editable=True,
                                                     options=list(self.ADCBitDepth.keys())),
             "Pixel size" : DetectorNumberParameter(group="Miscellaneous", value=3.45, editable=True, valueUnits="µm"),
@@ -113,7 +113,7 @@ class FLIRCameraManager(DetectorManager):
         self.__camera.AcquisitionMode.SetValue(self.acquisitionMode["Continous"])
         self.__camera.TriggerSource.SetValue(self.triggerSelector["Acquisition start"])
         self.__camera.PixelFormat.SetValue(self.pixelFormat["Mono16"])
-        self.__camera.AdcBitDepth.SetValue(self.ADCBitDepth["10 bit"])
+        self.__camera.AdcBitDepth.SetValue(self.ADCBitDepth["12 bit"])
 
         model = self.__camera.TLDevice.DeviceModelName.GetValue()
 
