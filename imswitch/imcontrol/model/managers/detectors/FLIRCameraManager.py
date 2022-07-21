@@ -2,7 +2,6 @@
 import numpy as np
 import PySpin
 from typing import Dict, Any
-from dataclasses import dataclass
 from imswitch.imcommon.model import initLogger
 from contextlib import contextmanager
 from .DetectorManager import (
