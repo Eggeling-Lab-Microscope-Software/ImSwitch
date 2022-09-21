@@ -10,10 +10,9 @@ from imswitch.imcontrol.model.configfiletools import (
 )
 
 class PyMMCorePositionerManager(PositionerManager):
-    """ PositionerManager for control of a stage controlled by MMCore, using pymmcore.
+    """ PositionerManager for control of a stage controlled by the Micro-Manager core, using pymmcore.
 
     Manager properties:
-
     - ``module`` -- name of the MM module referenced
     - ``device`` -- name of the MM device described in the module 
     - ``stageType`` -- either "single" or "double" (for single-axis stage or double-axis stage)
@@ -54,18 +53,13 @@ class PyMMCorePositionerManager(PositionerManager):
             # assuming device has no speed
             self.speed = 0.0
         self.__logger.info(f"... done!")
-
-        if len(positionerInfo.startPositions) == 0:
-            initialPosition = {
-                axis: self.__coreManager.getStagePosition(name, self.__stageType, axis) 
-                for axis in positionerInfo.axes
-            }
-        else:
-            assert len(positionerInfo.axes) == len(positionerInfo.startPositions), "Axes and starting positions don't match length."
-            assert positionerInfo.axes == list(positionerInfo.startPositions.keys()), "Axes and starting positions don't match names."
-            initialPosition = {
-                axis : positionerInfo.startPositions[axis] for axis in positionerInfo.axes 
-            }
+    
+        assert len(positionerInfo.axes) == len(positionerInfo.startPositions), "Axes and starting positions don't match length."
+        assert positionerInfo.axes == list(positionerInfo.startPositions.keys()), "Axes and starting positions don't match names."
+        
+        initialPosition = {
+            axis : positionerInfo.startPositions[axis] for axis in positionerInfo.axes 
+        }         
         super().__init__(positionerInfo, name, initialPosition)
     
     def setPosition(self, position: float, axis: str) -> None:
@@ -88,18 +82,31 @@ class PyMMCorePositionerManager(PositionerManager):
             self.__coreManager.setProperty(self.name, self.__speedProp, speed)
     
     def move(self, dist: float, axis: str) -> None:
-        self.setPosition(self.position[axis] + dist, axis)
+        movement = {ax : 0.0 for ax in self.axes}
+        movement[axis] = dist
+        try:
+            self.__coreManager.moveStage(
+                self.name,
+                self.__stageType,
+                axis,
+                movement
+            )
+            self._position[axis] += dist
+        except RuntimeError:
+            self.__logger.error(f"Invalid movement requested ({self.name} -> ({axis} : {dist})")
     
     def finalize(self) -> None:
         if self.storePosition:
             self.__logger.info("Storing current position in setup file...")
             options, optionsDidNotExist = loadOptions()
             if not optionsDidNotExist:
+                # options found
                 setupInfo = loadSetupInfo(options, SetupInfo)
                 setupInfo.positioners[self.name].startPositions = self.position
                 saveSetupInfo(options, setupInfo)
                 self.__logger.info("... done!")
             else:
+                # options not found
                 self.__logger.error("... could not find setup file! Skipping.")
         self.__logger.info(f"Closing {self.name}.")
         self.__coreManager.unloadDevice(self.name)

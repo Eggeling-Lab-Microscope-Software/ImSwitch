@@ -105,22 +105,19 @@ class PyMMCoreManager(SignalInterface):
             return self.__core.getPosition(label)
         else:
             return self.__getXYStagePosition[axis](label)
-        
     
-    def setStagePosition(self, label: str, stageType: str, axis: str, positions: Dict[str, float]) -> float:
+    def setStagePosition(self, label: str, stageType: str, axis: str, positions: Dict[str, float]) -> Dict[str, float]:
         """ Sets the selected stage position.
 
         Args:
             label (``str``): name of the positioner
             stageType (``str``): type of positioner (either "single" or "double")
             axis (``str``): axis to move (used only for "single" stage type)
-            newPos (``dict[str, float]``): dictionary with the positions to set.
+            positions (``dict[str, float]``): dictionary with the positions to set.
         
         Returns:
             the dictionary with the new [axis, position] assignment.
         """
-        # we make a deepcopy of the old positions dictionary
-        # in case a RuntimeError occurs
         if stageType == "single":
             self.__core.setPosition(label, positions[axis])
             positions[axis] = self.__core.getPosition(label)
@@ -132,3 +129,19 @@ class PyMMCoreManager(SignalInterface):
             positions = {axis : self.__getXYStagePosition[axis](label) for axis in ["X", "Y"]}
         return positions
 
+    def moveStage(self, label: str, stageType: str, axis: str, positions: Dict[str, float]) -> None:
+        """ Moves a stage with a specific distance.
+
+        Args:
+            label (``str``): name of the positioner
+            stageType (``str``): type of positioner (either "single" or "double")
+            axis (``str``): axis to move (used only for "single" stage type)
+            positions (``dict[str, float]``): dictionary with the relative positions to set.
+        """
+        if stageType == "single":
+            self.__core.setRelativePosition(label, positions[axis])
+        else:
+            # axis are forced by the manager constructor
+            # to be "X-Y", so this call should be safe
+            # just keep it under control...
+            self.__core.setRelativeXYPosition(label, positions["X"], positions["Y"])
