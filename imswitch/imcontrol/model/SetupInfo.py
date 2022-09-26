@@ -140,6 +140,9 @@ class FocusLockInfo:
 
     positioner: str
     """ Positioner name. """
+    
+    axis: Union[int, str]
+    """ Positioner axis name/index. """
 
     updateFreq: int
     """ Update frequency, in milliseconds. """
