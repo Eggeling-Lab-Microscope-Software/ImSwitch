@@ -113,6 +113,11 @@ class FLIRCameraManager(DetectorManager):
         self.__camera.TriggerSource.SetValue(self.triggerSelector["Acquisition start"])
         self.__camera.PixelFormat.SetValue(self.pixelFormat["Mono16"])
         self.__camera.AdcBitDepth.SetValue(self.ADCBitDepth["12 bit"])
+        
+        stream_node_map = self.__camera.GetTLStreamNodeMap()
+        handling_mode = PySpin.CEnumerationPtr(stream_node_map.GetNode('StreamBufferHandlingMode'))
+        handling_mode_entry = handling_mode.GetEntryByName('NewestOnly')
+        handling_mode.SetIntValue(handling_mode_entry.GetValue())
 
         model = self.__camera.TLDevice.DeviceModelName.GetValue()
 
