@@ -62,6 +62,7 @@ class FocusLockWidget(Widget):
         self.focusPlot.showGrid(x=True, y=True)
         # update this (self.focusPlotCurve.setData(X,Y)) with update(focusSignal) function
         self.focusPlotCurve = self.focusPlot.plot(pen='y')
+        self.lastFocusPoint = 0
 
         # Webcam graph
         self.webcamGraph = pg.GraphicsLayoutWidget()
