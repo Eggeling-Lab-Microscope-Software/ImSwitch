@@ -100,10 +100,10 @@ class PositionerController(ImConWidgetController):
             self.settingAttr = False
     
     def pyroStepPositionerUp(self, name: str, axis: str, step: float):
-        self.move(name, axis, step)
+        self._master.positionersManager[name].move(step, axis)
 
     def pyroStepPositionerDown(self, name: str, axis: str, step: float):
-        self.move(name, axis, -step)
+        self._master.positionersManager[name].move(-step, axis)
 
     def setXYPosition(self, x, y):
         positionerX = self.getPositionerNames()[0]
