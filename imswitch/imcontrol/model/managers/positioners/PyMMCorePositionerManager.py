@@ -1,4 +1,3 @@
-from pprint import pprint
 from .PositionerManager import PositionerManager
 from ..PyMMCoreManager import PyMMCoreManager # only for type hinting
 from imswitch.imcommon.model import initLogger
