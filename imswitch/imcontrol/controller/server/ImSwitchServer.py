@@ -147,7 +147,7 @@ class ImSwitchServer(Worker):
                     buffer.append(self._channel.get_image(detectorName))
         if not wasAcquiring:
             self._channel.setDetectorAcquisition(detectorName, False)
-        self._channel.sigUpdateImgProcessing.emit(detectorName, "medianFilter", np.median(np.stack(buffer), axis=0))
+        self._channel.sigUpdateImgProcessing.emit(detectorName, "medianFilter", np.median(np.stack(buffer), axis=0).astype(np.float32))
         self.__logger.info("[MedianFilter] ... done!")
 
 

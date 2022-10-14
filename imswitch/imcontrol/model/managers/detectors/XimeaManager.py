@@ -127,7 +127,7 @@ class XimeaManager(DetectorManager):
 
         # median filter applied only if exists in dictionary and its enabled
         if "medianFilter" in self.imageProcessing:
-            data = (data.astype(np.float32) / self.imageProcessing["medianFilter"]["content"].astype(np.float32)).astype(np.float32)
+            data = (data.astype(np.float32) / self.imageProcessing["medianFilter"]["content"]).astype(np.float32)
         return data
 
     def getChunk(self):
@@ -278,7 +278,7 @@ class XimeaManager(DetectorManager):
             try:
                 with Pyro5.api.Proxy(self.__uri) as proxy:
                     proxy.generateMedianFilter(self.name, self.__mfPositioners, self.__mfStep, self.__mfMaxFrames)
-                self._dtype = "float32"
+                    self._dtype = "float32"
             except Exception as e:
                 self.__logger.error(f"Could not connect proxy to ImSwitchServer. Error: {e}")
     
