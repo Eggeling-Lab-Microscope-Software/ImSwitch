@@ -21,7 +21,7 @@ class PositionerController(ImConWidgetController):
                 continue
 
             speed = hasattr(pManager, 'speed')
-            self._widget.addPositioner(pName, pManager.axes, speed)
+            self._widget.addPositioner(pName, pManager.axes, pManager.unit, pManager.startStep, speed)
             for axis in pManager.axes:
                 self._widget.updatePosition(pName, axis, pManager.position[axis])
                 self.setSharedAttr(pName, axis, _positionAttr, pManager.position[axis])

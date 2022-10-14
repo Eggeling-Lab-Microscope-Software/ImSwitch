@@ -78,6 +78,12 @@ class LaserInfo(DeviceInfo):
 class PositionerInfo(DeviceInfo):
     axes: List[str]
     """ A list of axes (names) that the positioner controls. """
+    
+    unit: str = "µm"
+    """ A string representing the reference measure unit of the positioner. """
+    
+    startStep: float = 0.05
+    """ Starting default step of the positioner. """
 
     startPositions: Dict[str, float] = field(default_factory=dict)
     """ Starting positions for each axis. """

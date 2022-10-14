@@ -21,6 +21,8 @@ class PositionerManager(ABC):
         self._position = initialPosition
 
         self.__name = name
+        self.__unit = positionerInfo.unit
+        self.__startStep = positionerInfo.startStep
 
         self.__axes = (positionerInfo.axes if isinstance(positionerInfo.axes, list) else list(positionerInfo.axes.keys()))
         self.__forPositioning = positionerInfo.forPositioning
@@ -34,6 +36,16 @@ class PositionerManager(ABC):
     def name(self) -> str:
         """ Unique positioner name, defined in the positioner's setup info. """
         return self.__name
+    
+    @property
+    def unit(self) -> str:
+        """ Reference space unit for the position. """
+        return self.__unit
+    
+    @property
+    def startStep(self) -> float:
+        """ Reference initial step (used only for widget initialization). """
+        return self.__startStep
 
     @property
     def position(self) -> Dict[str, float]:
