@@ -52,27 +52,32 @@ class PyMMCorePositionerManager(PositionerManager):
             # assuming device has no speed
             self.speed = 0.0
         self.__logger.info(f"... done!")
-    
-        assert len(positionerInfo.axes) == len(positionerInfo.startPositions), "Axes and starting positions don't match length."
-        assert positionerInfo.axes == list(positionerInfo.startPositions.keys()), "Axes and starting positions don't match names."
         
         initialPosition = {
-            axis : positionerInfo.startPositions[axis] for axis in positionerInfo.axes 
-        }         
+            axis : self.__coreManager.getStagePosition(name, axis) for axis in positionerInfo.axes
+        }
+        
+        # we need to make sure that the origin position is set again at startup
+        # so that it's correctly shown on the positioner's GUI widget;
+        # usually (but not tested) Micro-Manager's device adapters for positioners do not store the last origin
+        # after reboot when these are considered focus devices (i.e. MCL NanoDrive)
+        if any(value != 0 for value in initialPosition.values()):
+            initialPosition = self.__coreManager.setStageOrigin()                 
         super().__init__(positionerInfo, name, initialPosition)
     
-    def setPosition(self, position: float, axis: str) -> None:
+    def setPosition(self, position: float, axis: str, isAbsolute: bool = True) -> None:
         try:
             oldPosition = self.position[axis]
             self._position[axis] = position
             self._position = self.__coreManager.setStagePosition(
-                self.name,
-                self.__stageType,
-                axis,
-                self.position
+                label=self.name,
+                stageType=self.__stageType,
+                axis=axis,
+                positions=self.position,
+                isAbsolute=isAbsolute
             )
-        except RuntimeError:
-            self.__logger.error(f"Invalid position requested ({self.name} -> ({axis} : {position})")
+        except RuntimeError as e:
+            self.__logger.error(f"Invalid position requested ({self.name} -> ({axis} : {position}): MMCore response: {e}")
             self._position[axis] = oldPosition
     
     def setSpeed(self, speed: float) -> None:
@@ -81,18 +86,10 @@ class PyMMCorePositionerManager(PositionerManager):
             self.__coreManager.setProperty(self.name, self.__speedProp, speed)
     
     def move(self, dist: float, axis: str) -> None:
-        movement = {ax : 0.0 for ax in self.axes}
-        movement[axis] = dist
-        try:
-            self.__coreManager.moveStage(
-                self.name,
-                self.__stageType,
-                axis,
-                movement
-            )
-            self._position[axis] += dist
-        except RuntimeError:
-            self.__logger.error(f"Invalid movement requested ({self.name} -> ({axis} : {dist})")
+        self.setPosition(dist, axis, False)
+    
+    def setOrigin(self, axis: str):
+        self._position = self.__coreManager.setStageOrigin(self.name, self.__stageType, self.axes)
     
     def finalize(self) -> None:
         if self.storePosition:

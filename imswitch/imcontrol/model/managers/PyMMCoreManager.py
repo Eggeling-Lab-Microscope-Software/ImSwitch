@@ -1,6 +1,9 @@
 from imswitch.imcommon.framework import SignalInterface
 from imswitch.imcommon.model import initLogger
-from typing import Union, Tuple, Dict
+from imswitch.imcontrol.model.configfiletools import _mmcoreLogDir
+from typing import Union, Tuple, Dict, List
+import datetime as dt
+import os
 import pymmcore
 
 PropertyValue = Union[bool, float, int, str]
@@ -40,6 +43,10 @@ class PyMMCoreManager(SignalInterface):
             "X" : self.__core.getXPosition,
             "Y" : self.__core.getYPosition
         }
+        
+        logpath = os.path.join(_mmcoreLogDir, dt.datetime.now().strftime("%d_%m_%Y") + ".log")
+        self.__core.setPrimaryLogFile(logpath)
+        self.__core.enableDebugLog(True)
     
     def loadDevice(self, devInfo: Tuple[str, str, str]) -> None:
         """ Tries to load a device into the MMCore.
@@ -93,20 +100,16 @@ class PyMMCoreManager(SignalInterface):
         except RuntimeError as err:
             self.__logger.error(f"Failed to set \"{property}\" to {value}: {err.__str__()}")
     
-    def getStagePosition(self, label: str, type: str, axis: str = None) -> float:
+    def getStagePosition(self, label: str, axis: str) -> float:
         """ Returns the current stage position (on a given axis for double-axis stages).
         
         Args:
             label (``str``): name of the positioner
-            type (``str``): positioner type (either "single" or "double")
             axis (``str``): axis to read
         """
-        if type == "single":
-            return self.__core.getPosition(label)
-        else:
-            return self.__getXYStagePosition[axis](label)
+        return (self.__getXYStagePosition[axis](label) if axis in self.__getXYStagePosition.keys() else self.__core.getPosition(label))
     
-    def setStagePosition(self, label: str, stageType: str, axis: str, positions: Dict[str, float]) -> Dict[str, float]:
+    def setStagePosition(self, label: str, stageType: str, axis: str, positions: Dict[str, float], isAbsolute: bool = True) -> Dict[str, float]:
         """ Sets the selected stage position.
 
         Args:
@@ -114,34 +117,45 @@ class PyMMCoreManager(SignalInterface):
             stageType (``str``): type of positioner (either "single" or "double")
             axis (``str``): axis to move (used only for "single" stage type)
             positions (``dict[str, float]``): dictionary with the positions to set.
+            isAbsolute (``bool``): ``True`` if absolute movement is requested, otherwise false.  
         
         Returns:
             the dictionary with the new [axis, position] assignment.
         """
         if stageType == "single":
-            self.__core.setPosition(label, positions[axis])
-            positions[axis] = self.__core.getPosition(label)
+            if isAbsolute:
+                self.__core.setPosition(label, positions[axis])
+            else:
+                self.__core.setRelativePosition(label, positions[axis])
+            positions[axis] = self.getStagePosition(label, axis)
         else:
             # axis are forced by the manager constructor
             # to be "X-Y", so this call should be safe
             # just keep it under control...
-            self.__core.setXYPosition(label, positions["X"], positions["Y"])
+            if isAbsolute:
+                self.__core.setXYPosition(label, positions["X"], positions["Y"]) 
+            else:
+                self.__core.setRelativeXYPosition(label, positions["X"], positions["Y"])
             positions = {axis : self.__getXYStagePosition[axis](label) for axis in ["X", "Y"]}
         return positions
-
-    def moveStage(self, label: str, stageType: str, axis: str, positions: Dict[str, float]) -> None:
-        """ Moves a stage with a specific distance.
+    
+    def setStageOrigin(self, label: str, stageType: str, axes: List[str]) -> Dict[str, float]:
+        """Zeroes the stage at the current position.
 
         Args:
-            label (``str``): name of the positioner
+            label (``str``): name od the positioner
             stageType (``str``): type of positioner (either "single" or "double")
-            axis (``str``): axis to move (used only for "single" stage type)
-            positions (``dict[str, float]``): dictionary with the relative positions to set.
+            axis (str): axis to move (used only for "single" stage type)
+
+        Returns:
+            Dict[str, float]: dictionary containing the new positioner's origin.
         """
+        positions = {}
         if stageType == "single":
-            self.__core.setRelativePosition(label, positions[axis])
+            self.__core.setOrigin(label)
+            positions[axes[0]] = self.__core.getPosition(label)
         else:
-            # axis are forced by the manager constructor
-            # to be "X-Y", so this call should be safe
-            # just keep it under control...
-            self.__core.setRelativeXYPosition(label, positions["X"], positions["Y"])
+            self.__core.setOriginXY(label)
+            positions = {ax : self.__getXYStagePosition[ax](label) for ax in axes}
+        return positions
+        

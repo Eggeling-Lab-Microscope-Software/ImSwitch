@@ -99,6 +99,9 @@ class PositionerInfo(DeviceInfo):
 
     storePosition: bool = False
     """ Wether the positioner should store the last recorded position. """
+    
+    setOriginOnClose: bool = False
+    """ Wether to set the positioner's origin to the last recorded position upon shutdown. """
 
 
 @dataclass(frozen=True)

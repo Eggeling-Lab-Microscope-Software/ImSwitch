@@ -11,6 +11,7 @@ class PositionerWidget(Widget):
     sigStepUpClicked = QtCore.Signal(str, str)    # (positionerName, axis)
     sigStepDownClicked = QtCore.Signal(str, str)  # (positionerName, axis)
     sigsetSpeedClicked = QtCore.Signal()  # (speed)
+    sigsetOrigin = QtCore.Signal(str, str) # (positionerName, axis)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -51,16 +52,21 @@ class PositionerWidget(Widget):
             self.pars['DownButton' + parNameSuffix].clicked.connect(
                 lambda *args, axis=axis: self.sigStepDownClicked.emit(positionerName, axis)
             )
+            self.pars["SetOrigin" + parNameSuffix] = guitools.BetterPushButton("Set origin here")
+            self.grid.addWidget(self.pars["SetOrigin" + parNameSuffix], self.numPositioners, 7)
+            self.pars["SetOrigin" + parNameSuffix].clicked.connect(
+                lambda *args, axis=axis: self.sigsetOrigin.emit(positionerName, axis)
+            )
             if speed:
                 self.pars['Speed'] = QtWidgets.QLabel(f'<strong>{0:.2f} {unit}/s</strong>')
                 self.pars['Speed'].setTextFormat(QtCore.Qt.RichText)
                 self.pars['ButtonSpeedEnter'] = guitools.BetterPushButton('Enter')
                 self.pars['SpeedEdit'] = QtWidgets.QLineEdit('1000')
                 self.pars['SpeedUnit'] = QtWidgets.QLabel(f' {unit}/s')
-                self.grid.addWidget(self.pars['SpeedEdit'], self.numPositioners, 10)
-                self.grid.addWidget(self.pars['SpeedUnit'], self.numPositioners, 11)
-                self.grid.addWidget(self.pars['ButtonSpeedEnter'], self.numPositioners, 12)
-                self.grid.addWidget(self.pars['Speed'], self.numPositioners, 7)
+                self.grid.addWidget(self.pars['Speed'], self.numPositioners, 8)
+                self.grid.addWidget(self.pars['SpeedEdit'], self.numPositioners, 11)
+                self.grid.addWidget(self.pars['SpeedUnit'], self.numPositioners, 12)
+                self.grid.addWidget(self.pars['ButtonSpeedEnter'], self.numPositioners, 13)
                 
             
                 self.pars['ButtonSpeedEnter'].clicked.connect(

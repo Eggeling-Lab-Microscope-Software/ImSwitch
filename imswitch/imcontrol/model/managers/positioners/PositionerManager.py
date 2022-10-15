@@ -28,6 +28,7 @@ class PositionerManager(ABC):
         self.__forPositioning = positionerInfo.forPositioning
         self.__forScanning = positionerInfo.forScanning
         self.__storePosition = positionerInfo.storePosition
+        self.__setOriginOnClose = positionerInfo.setOriginOnClose
         if not positionerInfo.forPositioning and not positionerInfo.forScanning:
             raise ValueError('At least one of forPositioning and forScanning must be set in'
                              ' PositionerInfo.')
@@ -87,6 +88,12 @@ class PositionerManager(ABC):
         If the positioner controls multiple axes, the axis must be specified.
         """
         pass
+    
+    def setOrigin(self, axis: str):
+        """ Zeroes the positioner's current axis. This needs to be implemented 
+        on the child class of PositionerManager.
+        """
+        raise NotImplementedError(f"Requested setOrigin for {self.name}, but method must be implemented!")
 
     def finalize(self) -> None:
         """ Close/cleanup positioner. """

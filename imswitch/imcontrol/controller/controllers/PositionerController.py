@@ -39,8 +39,18 @@ class PositionerController(ImConWidgetController):
         self._widget.sigStepUpClicked.connect(self.stepUp)
         self._widget.sigStepDownClicked.connect(self.stepDown)
         self._widget.sigsetSpeedClicked.connect(self.setSpeedGUI)
+        self._widget.sigsetOrigin.connect(self.setOrigin)
 
     def closeEvent(self):
+        def setOriginOnClose(p, axis):
+            try:
+                p.setOrigin(axis)
+            except NotImplementedError:
+                pass
+        
+        self._master.positionersManager.execOnAll(
+            lambda p: [setOriginOnClose(p, axis) for axis in p.axes if p.setOriginOnClose]
+        )
         self._master.positionersManager.execOnAll(
             lambda p: [p.setPosition(0, axis) for axis in p.axes if not p.storePosition]
         )
@@ -71,6 +81,12 @@ class PositionerController(ImConWidgetController):
         positionerName = self.getPositionerNames()[0]
         speed = self._widget.getSpeed()
         self.setSpeed(positionerName=positionerName, speed=speed)
+    
+    def setOrigin(self, positionerName, axis):
+        positioner = self._master.positionersManager[positionerName]
+        positioner.setOrigin(axis)
+        for ax in positioner.axes:
+            self._widget.updatePosition(positionerName, ax, positioner.position[ax])
 
     def setSpeed(self, positionerName, speed=(1000,1000,1000)):
         self._master.positionersManager[positionerName].setSpeed(speed)
