@@ -65,7 +65,7 @@ class PyMMCorePositionerManager(PositionerManager):
             initialPosition = self.__coreManager.setStageOrigin()                 
         super().__init__(positionerInfo, name, initialPosition)
     
-    def setPosition(self, position: float, axis: str, isAbsolute: bool = True) -> None:
+    def setPosition(self, position: float, axis: str) -> None:
         try:
             oldPosition = self.position[axis]
             self._position[axis] = position
@@ -74,7 +74,7 @@ class PyMMCorePositionerManager(PositionerManager):
                 stageType=self.__stageType,
                 axis=axis,
                 positions=self.position,
-                isAbsolute=isAbsolute
+                isAbsolute=True
             )
         except RuntimeError as e:
             self.__logger.error(f"Invalid position requested ({self.name} -> ({axis} : {position}): MMCore response: {e}")
@@ -86,7 +86,18 @@ class PyMMCorePositionerManager(PositionerManager):
             self.__coreManager.setProperty(self.name, self.__speedProp, speed)
     
     def move(self, dist: float, axis: str) -> None:
-        self.setPosition(dist, axis, False)
+        movement = { ax : 0 for ax in self.axes }
+        movement[axis] = dist
+        try:
+            self._position = self.__coreManager.setStagePosition(
+                label=self.name,
+                stageType=self.__stageType,
+                axis=axis,
+                positions=movement,
+                isAbsolute=False
+            )
+        except RuntimeError as e:
+            self.__logger.error(f"Invalid movement requested ({self.name} -> ({axis} : {dist}): MMCore response: {e}")
     
     def setOrigin(self, axis: str):
         self._position = self.__coreManager.setStageOrigin(self.name, self.__stageType, self.axes)
