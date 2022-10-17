@@ -73,6 +73,10 @@ class PositionerManager(ABC):
     def storePosition(self) -> bool:
         """ Wether the positioner should store the last recorded position. """
         return self.__storePosition
+    
+    @property
+    def setOriginOnClose(self) -> bool:
+        return self.__setOriginOnClose
 
     @abstractmethod
     def move(self, dist: float, axis: str):
