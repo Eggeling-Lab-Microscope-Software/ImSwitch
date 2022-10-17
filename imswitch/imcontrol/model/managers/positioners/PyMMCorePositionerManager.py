@@ -62,7 +62,7 @@ class PyMMCorePositionerManager(PositionerManager):
         # usually (but not tested) Micro-Manager's device adapters for positioners do not store the last origin
         # after reboot when these are considered focus devices (i.e. MCL NanoDrive)
         if any(value != 0 for value in initialPosition.values()):
-            initialPosition = self.__coreManager.setStageOrigin()                 
+            initialPosition = self.__coreManager.setStageOrigin(name, self.__stageType, positionerInfo.axes)                 
         super().__init__(positionerInfo, name, initialPosition)
     
     def setPosition(self, position: float, axis: str) -> None:
