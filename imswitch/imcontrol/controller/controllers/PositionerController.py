@@ -30,8 +30,6 @@ class PositionerController(ImConWidgetController):
 
         # Connect CommunicationChannel signals
         self._commChannel.sharedAttrs.sigAttributeSet.connect(self.attrChanged)
-        self._commChannel.sigSetXYPosition.connect(lambda x, y: self.setXYPosition(x, y))
-        self._commChannel.sigSetZPosition.connect(lambda z: self.setZPosition(z))
         self._commChannel.sigSetSpeed.connect(lambda speed: self.setSpeedGUI(speed))
         self._commChannel.sigUpdateImgProcessing.connect(self.updateImageProcessing)
 

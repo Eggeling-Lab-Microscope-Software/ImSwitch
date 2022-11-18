@@ -2,6 +2,7 @@ import os
 import time
 import numpy as np
 from typing import Optional, Union, List
+import numpy as np
 
 from imswitch.imcommon.framework import Timer
 from imswitch.imcommon.model import ostools, APIExport
@@ -377,9 +378,12 @@ class RecordingController(ImConWidgetController):
         return self._master.detectorsManager._subManagers[detectorName]
 
     @APIExport(runOnUIThread=True)
-    def snapImage(self) -> None:
+    def snapImage(self, output: bool = False) -> Optional[np.ndarray]:
         """ Take a snap and save it to a .tiff file at the set file path. """
-        self.snap()
+        if output:
+            return self.snapNumpy()
+        else:
+            self.snap()
 
     @APIExport(runOnUIThread=True)
     def startRecording(self) -> None:
