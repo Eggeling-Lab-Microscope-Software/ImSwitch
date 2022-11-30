@@ -2,6 +2,7 @@ from imswitch.imcommon.framework import SignalInterface
 from imswitch.imcommon.model import initLogger
 from imswitch.imcontrol.model.configfiletools import _mmcoreLogDir
 from typing import Union, Tuple, Dict, List
+import numpy as np
 import datetime as dt
 import os
 import pymmcore
@@ -48,7 +49,7 @@ class PyMMCoreManager(SignalInterface):
         self.__core.setPrimaryLogFile(logpath)
         self.__core.enableDebugLog(True)
     
-    def loadDevice(self, devInfo: Tuple[str, str, str]) -> None:
+    def loadDevice(self, devInfo: Tuple[str, str, str], isCamera: bool = False) -> None:
         """ Tries to load a device into the MMCore.
 
         Args:
@@ -66,6 +67,8 @@ class PyMMCoreManager(SignalInterface):
             self.__core.initializeDevice(devInfo[0])
         except RuntimeError:
             raise ValueError(f"Error in loading device \"{devInfo[0]}\", check the values of \"module\" and \"device\" in the configuration file (current values: {devInfo[1]}, {devInfo[2]})")
+        if isCamera:
+            self.__core.initializeCircularBuffer()
     
     def unloadDevice(self, label: str) -> None:
         """ Tries to unload from the MMCore a previously loaded device (used for finalize() call)
@@ -158,4 +161,7 @@ class PyMMCoreManager(SignalInterface):
             self.__core.setOriginXY(label)
             positions = {ax : self.__getXYStagePosition[ax](label) for ax in axes}
         return positions
+    
+    def getLatestImage(self) -> np.ndarray:
+        return self.__core.popNextImage()
         
