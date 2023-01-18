@@ -8,6 +8,7 @@ from fastapi import FastAPI
 import uvicorn
 import time
 from functools import wraps
+from useq import MDASequence
 
 app = FastAPI()
 
