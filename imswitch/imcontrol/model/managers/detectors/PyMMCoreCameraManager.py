@@ -71,7 +71,7 @@ class PyMMCoreCameraManager(DetectorManager):
                 if propVals["type"] == str:
                     parameters[propName] = DetectorListParameter(group="Camera properties", value=propVals["values"], options=[propVals["values"]], editable=False)
                 else:
-                    parameters[propName] = DetectorNumberParameter(group="Camera properties", value=float(propVals["values"]), valueUnits="", editable=propVals["read_only"])
+                    parameters[propName] = DetectorNumberParameter(group="Camera properties", value=float(propVals["values"]), valueUnits="", editable=not propVals["read_only"])
 
         parameters["Camera pixel size"] = DetectorNumberParameter(group='Miscellaneous', value=10,  valueUnits='µm', editable=True)
 
