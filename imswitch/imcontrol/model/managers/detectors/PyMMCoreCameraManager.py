@@ -1,18 +1,33 @@
 from ..PyMMCoreManager import PyMMCoreManager # only for type hinting
 from imswitch.imcommon.model import initLogger
-
+from contextlib import contextmanager
 from .DetectorManager import (
-    DetectorManager, DetectorNumberParameter
+    DetectorManager, DetectorNumberParameter, DetectorListParameter
 )
 
 class PyMMCoreCameraManager(DetectorManager):
+    """ Manager class for camera controlled via the Micro-Manager core.
+
+    Manager properties:
+    
+    - ``module`` -- name of the MM module referenced
+    - ``device`` -- name of the MM device described in the module 
+    - ``exposureName (str)`` --  name of the property related to the exposure time;
+    - ``preInitProperties (dict) (optional)`` -- a dictionary containing properties that need to be pre-initialized by the user, in the form
+    ``{name (str): value (Any)}``
+    """
+
     def __init__(self, detectorInfo, name, **lowLevelManagers):
         self.__logger = initLogger(self, instanceName=name)
         self.__coreManager: PyMMCoreManager = lowLevelManagers["pymmcManager"]
 
         module = detectorInfo.managerProperties["module"]
         device = detectorInfo.managerProperties["device"]
-        
+        try:
+            self.exposureProperty = detectorInfo.managerProperties["exposureName"]
+        except:
+            raise ValueError("No property name for exposure time has been defined!")
+
         devInfo = (name, module, device)
 
         self.__coreManager.loadDevice(devInfo, True)
@@ -20,14 +35,46 @@ class PyMMCoreCameraManager(DetectorManager):
         # todo: dictionary should be filled automatically from the core
         # by reading the available camera parameters and returning them as a dictionary
 
-        properties = self.__coreManager.loadProperties(name)
+        preInit = detectorInfo.managerProperties["preInitProperties"]
 
+        if preInit is not None:
+            properties = self.__coreManager.loadProperties(name, preInit)
+        else:
+            properties = self.__coreManager.loadProperties(name)
+
+        # unfortunately handling of the device properties is currently a non-standardized mess;
+        # sometimes the exposure time is also a property and we want to filter it out as the properties
+        # at the moment don't have a reference unit measure which we can use to generate the parameters,
+        # so for now we'll manage by filter out the exposure from the read properties
+        if self.exposureProperty in properties:
+            del properties[self.exposureProperty]
+
+        # we initialize the parameters dictionary with the exposure property
         parameters = {
-            'Exposure': DetectorNumberParameter(group='Timings', value=10,
+            self.exposureProperty : DetectorNumberParameter(group='Timings', value=10,
                                                 valueUnits='ms', editable=True),
-            'Camera pixel size': DetectorNumberParameter(group='Miscellaneous', value=10,
-                                                         valueUnits='µm', editable=True), 
         }
+
+        # we then iterate over the read properties;
+        # these are arranged in a dictionary with the following keys:
+        # "type": the type of the property,
+        # "values": the actual values of the type, to discern between a number or a list,
+        # "read_only": if it's a read-only parameter (hence editable or not)
+        for propName, propVals in properties.items():
+            if propVals["type"] == list:
+                # apparently a property could exist and have no values set,
+                # and we have to nest this check internally to avoid falling in the
+                # other branch of the if-else...
+                if len(propVals["values"]) > 0:
+                    parameters[propName] = DetectorListParameter(group="Camera properties", value=propVals["values"][0], options=propVals["values"], editable=True)
+            else:
+                if propVals["type"] == str:
+                    parameters[propName] = DetectorListParameter(group="Camera properties", value=propVals["values"], options=list(propVals["values"]), editable=False)
+                else:
+                    parameters[propName] = DetectorNumberParameter(group="Camera properties", value=float(propVals["values"]), valueUnits="", editable=propVals["read_only"])
+
+        parameters["Camera pixel size"] = DetectorNumberParameter(group='Miscellaneous', value=10,  valueUnits='µm', editable=True)
+
         _, _, hsize, vsize = self.__coreManager.getROI(name)
 
         super().__init__(detectorInfo, name, fullShape=(hsize, vsize), supportedBinnings=[1], 
@@ -57,22 +104,33 @@ class PyMMCoreCameraManager(DetectorManager):
     def flushBuffers(self):
         self.__coreManager.coreObject.clearCircularBuffer()
     
+    @contextmanager
+    def _camera_disabled(self):
+        if self.__coreManager.coreObject.isSequenceRunning(self.name):
+            try:
+                self.stopAcquisition()
+                yield
+            finally:
+                self.startAcquisition()
+        else:
+            yield
+    
     def startAcquisition(self):
         self.__coreManager.coreObject.startContinuousSequenceAcquisition(self.parameters["Exposure"].value)
 
     def stopAcquisition(self):
         self.__coreManager.coreObject.stopSequenceAcquisition(self.name)
-
     
     def setParameter(self, name, value):
         # this may not work properly, keep an eye on it
-        if name == "Exposure":
-            self.__coreManager.coreObject.setExposure(value)
-        else:
-            self.__coreManager.setProperty(self.name, name, value) 
+        with self._camera_disabled():
+            if name == "Exposure":
+                self.__coreManager.coreObject.setExposure(value)
+            else:
+                self.__coreManager.setProperty(self.name, name, value) 
         # there will be still images left in the circular buffer
         # captured using the previous property value, so we flush the buffer
-        self.flushBuffers()
+            self.flushBuffers()
         super().setParameter(name, value)
 
     def crop(self, hpos: int, vpos: int, hsize: int, vsize: int):

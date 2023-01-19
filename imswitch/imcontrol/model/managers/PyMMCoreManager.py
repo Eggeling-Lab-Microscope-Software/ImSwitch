@@ -3,7 +3,6 @@ from imswitch.imcommon.model import initLogger
 from imswitch.imcontrol.model.configfiletools import _mmcoreLogDir
 from typing import Union, Tuple, Dict, List
 from pymmcore_plus import CMMCorePlus, PropertyType
-import numpy as np
 import datetime as dt
 import os
 
@@ -44,25 +43,34 @@ class PyMMCoreManager(SignalInterface):
         properties = {}
 
         for propName in self.__core.getDevicePropertyNames(label):
-            propType = self.__core.getPropertyType(label, propName)
-            isReadOnly = self.__core.isPropertyReadOnly(label, propName)
-            isPreInit = self.__core.isPropertyPreInit(label, propName)
-            propVals = self.__core.getAllowedPropertyValues(label, propName)
+
+            propObj = self.__core.getPropertyObject(label, propName)
+            propType = propObj.type()
+            isReadOnly = propObj.isReadOnly()
+            isPreInit = propObj.isPreInit()
+            values = list(propObj.allowedValues())
 
             if propType in [PropertyType.Integer, PropertyType.Float]:
-                if len(propVals) == 0:
-                    if isPreInit and preInitValues and preInitValues[propName] and not isReadOnly:
-                        self.__core.setProperty(label, preInitValues[propName])
-                    propVals = self.__core.getProperty(label, propName)
-            elif propType != PropertyType.String:
+                if len(values) > 0:
+                    values = [propType.to_python()(value) for value in values]
+                else:
+                    if isPreInit and preInitValues and propName in preInitValues and not isReadOnly:
+                        propObj.setValue(preInitValues[propName])
+                    values = propObj.value
+            elif propType == PropertyType.String:
+                # allowedValues() may not return nothing if the property is read-only
+                # hence we make sure we get the proper value
+                if isReadOnly:
+                    values = str(propObj.value)
+            else:
                 raise ValueError(f"Property {propName} is of unrecognized type!")
             
+            
             properties[propName] = {
-                "type": list if len(propVals) > 0 else propType.to_python(),
-                "values": list(propVals),
+                "type": type(values),
+                "values": values,
                 "read_only": isReadOnly
             }
-        
         return properties
     
     def loadDevice(self, devInfo: Tuple[str, str, str], isCamera: bool = False) -> None:
