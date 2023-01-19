@@ -61,7 +61,7 @@ class PyMMCoreManager(SignalInterface):
                 # allowedValues() may not return nothing if the property is read-only
                 # hence we make sure we get the proper value
                 if isReadOnly:
-                    values = str(propObj.value)
+                    values = propObj.value
             else:
                 raise ValueError(f"Property {propName} is of unrecognized type!")
             
