@@ -31,15 +31,11 @@ class PyMMCoreCameraManager(DetectorManager):
         devInfo = (name, module, device)
 
         self.__coreManager.loadDevice(devInfo, True)
-
-        # todo: dictionary should be filled automatically from the core
-        # by reading the available camera parameters and returning them as a dictionary
-
-        preInit = detectorInfo.managerProperties["preInitProperties"]
-
-        if preInit is not None:
+        
+        try:
+            preInit = detectorInfo.managerProperties["preInitProperties"]
             properties = self.__coreManager.loadProperties(name, preInit)
-        else:
+        except KeyError:
             properties = self.__coreManager.loadProperties(name)
 
         # unfortunately handling of the device properties is currently a non-standardized mess;
