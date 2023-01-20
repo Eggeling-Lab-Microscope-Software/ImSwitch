@@ -2,9 +2,9 @@ from imswitch.imcommon.framework import SignalInterface
 from imswitch.imcommon.model import initLogger
 from imswitch.imcontrol.model.configfiletools import _mmcoreLogDir
 from typing import Union, Tuple, Dict, List
+from pymmcore_plus import CMMCorePlus, PropertyType
 import datetime as dt
 import os
-import pymmcore
 
 PropertyValue = Union[bool, float, int, str]
 
@@ -20,23 +20,10 @@ class PyMMCoreManager(SignalInterface):
     def __init__(self, setupInfo) -> None:
         super().__init__()
         self.__logger = initLogger(self)
-        mmPath = setupInfo.pymmcore.MMPath
-
-        if mmPath is None:
-            raise ValueError("No Micro-Manager path defined.")
-
-        self.__core = pymmcore.CMMCore()
-        devSearchPath = (setupInfo.pymmcore.MMDevSearchPath 
-                        if setupInfo.pymmcore.MMDevSearchPath is not None 
-                        else mmPath)
-
-        if not isinstance(devSearchPath, list):
-            devSearchPath = [devSearchPath]
+        self.__core = CMMCorePlus()
         
-        self.__logger.info(f"Micro-Manager path: {mmPath}")
-        self.__logger.info(f"Device search paths: {devSearchPath}")
+        self.__logger.info(f"Micro-Manager path: {self.__core._mm_path}")
 
-        self.__core.setDeviceAdapterSearchPaths(devSearchPath)
         self.__logger.info(self.__core.getAPIVersionInfo())
 
         self.__getXYStagePosition = {
@@ -48,7 +35,45 @@ class PyMMCoreManager(SignalInterface):
         self.__core.setPrimaryLogFile(logpath)
         self.__core.enableDebugLog(True)
     
-    def loadDevice(self, devInfo: Tuple[str, str, str]) -> None:
+    @property
+    def coreObject(self) -> CMMCorePlus:
+        return self.__core
+    
+    def loadProperties(self, label: str, preInitValues: dict = None) -> dict:
+        properties = {}
+
+        for propName in self.__core.getDevicePropertyNames(label):
+
+            propObj = self.__core.getPropertyObject(label, propName)
+            propType = propObj.type()
+            isReadOnly = propObj.isReadOnly()
+            isPreInit = propObj.isPreInit()
+            values = list(propObj.allowedValues())
+
+            if propType in [PropertyType.Integer, PropertyType.Float]:
+                if len(values) > 0:
+                    values = [propType.to_python()(value) for value in values]
+                else:
+                    if isPreInit and preInitValues and propName in preInitValues and not isReadOnly:
+                        propObj.setValue(preInitValues[propName])
+                    values = propObj.value
+            elif propType == PropertyType.String:
+                # allowedValues() may not return nothing if the property is read-only
+                # hence we make sure we get the proper value
+                if isReadOnly:
+                    values = propObj.value
+            else:
+                raise ValueError(f"Property {propName} is of unrecognized type!")
+            
+            
+            properties[propName] = {
+                "type": type(values),
+                "values": values,
+                "read_only": isReadOnly
+            }
+        return properties
+    
+    def loadDevice(self, devInfo: Tuple[str, str, str], isCamera: bool = False) -> None:
         """ Tries to load a device into the MMCore.
 
         Args:
@@ -56,6 +81,7 @@ class PyMMCoreManager(SignalInterface):
             - devInfo[0]: label
             - devInfo[1]: moduleName
             - devInfo[2]: deviceName
+            isCamera (``bool``): flag signaling wether the requested device is a camera.
         """
         try:
             self.__core.loadDevice(
@@ -66,6 +92,9 @@ class PyMMCoreManager(SignalInterface):
             self.__core.initializeDevice(devInfo[0])
         except RuntimeError:
             raise ValueError(f"Error in loading device \"{devInfo[0]}\", check the values of \"module\" and \"device\" in the configuration file (current values: {devInfo[1]}, {devInfo[2]})")
+        if isCamera:
+            self.__core.setCameraDevice(devInfo[0])
+            self.__core.initializeCircularBuffer()
     
     def unloadDevice(self, label: str) -> None:
         """ Tries to unload from the MMCore a previously loaded device (used for finalize() call)
@@ -158,4 +187,26 @@ class PyMMCoreManager(SignalInterface):
             self.__core.setOriginXY(label)
             positions = {ax : self.__getXYStagePosition[ax](label) for ax in axes}
         return positions
-        
+    
+    def getROI(self, label: str) -> tuple:
+        """Returns the current ROI for the selected camera device.
+
+        Args:
+            label (str): name of the camera.
+
+        Returns:
+            tuple: a rectangle describing the captured image. The tuple is described as: `[x, y, xSize, ySize]`.
+        """
+        return tuple(self.__core.getROI())
+    
+    def setROI(self, label: str, hpos: int, vpos: int, hsize: int, vsize: int) -> None:
+        """Creates a new ROI for the camera device.
+
+        Args:
+            - `label (str)`: name of the camera.
+            - `hpos (int)`: horizontal offset.
+            - `vpos (int)`: vertical offset.
+            - `hsize (int)`: horizontal size of the ROI (width).
+            - `vsize (int)`: vertical size of the ROI (height).
+        """
+        self.__core.setROI(hpos, vpos, hsize, vsize)
