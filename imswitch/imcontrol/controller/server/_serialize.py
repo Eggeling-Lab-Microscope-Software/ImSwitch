@@ -6,7 +6,6 @@ from typing import Deque, Generic, TypeVar
 import numpy as np
 import Pyro5
 import Pyro5.api
-import useq
 
 T = TypeVar("T")
 
@@ -44,22 +43,6 @@ class Serializer(ABC, Generic[T]):
     @classmethod
     def type_key(cls):
         return f"{cls.type_().__module__}.{cls.type_().__name__}"
-
-
-class SerMDASequence(Serializer[useq.MDASequence]):
-    def to_dict(self, obj: useq.MDASequence):
-        return obj.dict()
-
-    def from_dict(self, classname: str, d: dict):
-        return useq.MDASequence.parse_obj(d)
-
-
-class SerMDAEvent(Serializer[useq.MDAEvent]):
-    def to_dict(self, obj: useq.MDAEvent):
-        return obj.dict()
-
-    def from_dict(self, classname: str, d: dict):
-        return useq.MDAEvent.parse_obj(d)
 
 
 class SerNDArray(Serializer[np.ndarray]):

@@ -250,6 +250,7 @@ class PyroServerInfo:
     name: Optional[str] = 'ImSwitchServer'
     host: Optional[str] = '127.0.0.1'
     port: Optional[int] = 54333
+    active: Optional[bool] = False
 
 @dataclass(frozen=True)
 class PyMMCoreInfo:
