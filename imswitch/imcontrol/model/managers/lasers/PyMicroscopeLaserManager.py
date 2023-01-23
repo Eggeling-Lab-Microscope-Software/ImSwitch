@@ -4,7 +4,7 @@ from imswitch.imcommon.model import pythontools, initLogger
 from microscope.abc import LightSource
 
 class PyMicroscopeLaserManager(LaserManager):
-    """ Generic LaserManager for laser handlers supported by Python Microscope.
+    """ Generic LaserManager for laser handlers supported by the Python Microscope backend.
 
     Manager properties:
 
