@@ -402,7 +402,7 @@ class RecordingWorker(Worker):
                     raise ValueError('recFrames must be specified in SpecFrames, ScanOnce or'
                                      ' ScanLapse mode')
 
-                if self.saveFormat == SaveFormat.TIFF or self.saveFormat == SaveFormat.TIFF_Single:
+                if self.saveFormat == SaveFormat.TIFF:
                     writer = tiff.TiffWriter(filenames[detectorName])
                 else:
                     writer = None
@@ -456,8 +456,6 @@ class RecordingWorker(Worker):
                                 min(list(currentFrame.values()))
                             )
                     time.sleep(0.0001)  # Prevents freezing for some reason
-
-                self.__recordingManager.sigRecordingFrameNumUpdated.emit(0)
             elif self.recMode == RecMode.SpecTime:
                 recTime = self.recTime
                 if recTime is None:
@@ -557,7 +555,7 @@ class RecordingWorker(Worker):
                 raise ValueError('Unsupported recording mode specified')
         finally:
 
-            if (self.saveFormat == SaveFormat.TIFF or self.saveFormat == SaveFormat.TIFF_Single) and writer is not None:
+            if (self.saveFormat == SaveFormat.TIFF) and writer is not None:
                 writer.close()
             
             if self.saveFormat == SaveFormat.HDF5 or self.saveFormat == SaveFormat.ZARR:
@@ -588,8 +586,6 @@ class RecordingWorker(Worker):
                         else:
                             self.store.close()
             emitSignal = True
-            if self.recMode in [RecMode.SpecFrames, RecMode.ScanOnce, RecMode.ScanLapse]:
-                emitSignal = False
             self.__recordingManager.endRecording(emitSignal=emitSignal, wait=False)
 
     def _getFiles(self):
