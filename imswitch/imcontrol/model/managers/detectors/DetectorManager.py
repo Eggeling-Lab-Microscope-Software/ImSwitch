@@ -46,6 +46,9 @@ class DetectorNumberParameter(DetectorParameter):
 
     valueUnits: str
     """ Parameter value units, e.g. "nm" or "fps". """
+    
+    valueLimits: tuple = (None, None)
+    """ Parameter value upper and lower limits. """
 
 
 @dataclass
