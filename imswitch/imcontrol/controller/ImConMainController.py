@@ -72,7 +72,7 @@ class ImConMainController(MainController):
         self.__mainView.addShortcuts(self.__shortcuts)
 
         if setupInfo.pyroServerInfo.active:
-            self._serverWorker = ImSwitchServer(self.__api, setupInfo)
+            self._serverWorker = ImSwitchServer(self.__api, setupInfo, self.__commChannel)
             self.__logger.debug(self.__api)
             self._thread = Thread()
             self._serverWorker.moveToThread(self._thread)
