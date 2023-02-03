@@ -1,7 +1,8 @@
 import importlib
+import numpy as np
 from imswitch.imcommon.model import pythontools, initLogger
 from microscope.abc import Camera
-from microscope import ROI
+from microscope import ROI, TriggerMode, TriggerType
 from collections import deque
 from .DetectorManager import (
     DetectorManager, DetectorNumberParameter, DetectorListParameter
@@ -24,7 +25,7 @@ class PyMicroscopeCameraManager(DetectorManager):
         
         modulePath = "microscope.cameras"
         if driver[0] == "simulators":
-            modulePath = "microscope.simulators"
+            modulePath = "microscope"
         package = importlib.import_module(
             pythontools.joinModulePath(modulePath, driver[0])
         )
@@ -44,6 +45,14 @@ class PyMicroscopeCameraManager(DetectorManager):
                                                     valueUnits="frames",
                                                     editable=True)
         }
+        parameters["Trigger type"] = DetectorListParameter(group="Trigger settings",
+                                                        value=TriggerType.SOFTWARE.name,
+                                                        options=[type.name for type in TriggerType],
+                                                        editable=True)
+        parameters["Trigger mode"] = DetectorListParameter(group="Trigger settings",
+                                                           value=TriggerMode.ONCE,
+                                                           options=[mode.name for mode in TriggerMode],
+                                                           editable=True)
         for setting in self.__camera.describe_settings():
             editable = not setting[1]["readonly"]
             settingType = setting[1]["type"]
@@ -119,28 +128,33 @@ class PyMicroscopeCameraManager(DetectorManager):
         """ Returns the frame that represents what the detector currently is
         capturing. The returned object is a numpy array of shape
         (height, width). """
-        self.__camera
+        try:
+            return self.__client.pop()
+        except IndexError:
+            return None
 
     def getChunk(self):
         """ Returns the frames captured by the detector since getChunk was last
         called, or since the buffers were last flushed (whichever happened
         last). The returned object is a numpy array of shape
         (numFrames, height, width). """
-        pass
+        stack = np.stack(self.__client)
+        self.__client.clear()
+        return stack
 
     def flushBuffers(self) -> None:
         """ Flushes the detector buffers so that getChunk starts at the last
         frame captured at the time that this function was called. """
-        pass
+        self.__client.clear()
 
     def startAcquisition(self) -> None:
         """ Starts image acquisition. """
-        pass
+        self.__camera.enable()
 
     def stopAcquisition(self) -> None:
         """ Stops image acquisition. """
-        pass
+        self.__camera.disable()
 
     def finalize(self) -> None:
         """ Close/cleanup detector. """
-        pass
+        self.stopAcquisition()
