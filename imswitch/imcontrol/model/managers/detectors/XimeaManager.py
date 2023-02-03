@@ -7,7 +7,7 @@ from imswitch.imcontrol.model.interfaces import XimeaSettings
 from imswitch.imcommon.model import initLogger
 from imswitch.imcommon.model.dirtools import UserFileDirs
 from contextlib import contextmanager
-from numba import vectorize, float32, uint16, int16
+from numba import vectorize, float32
 from .DetectorManager import (
     DetectorManager, DetectorNumberParameter, DetectorListParameter, DetectorAction
 )
@@ -122,7 +122,6 @@ class XimeaManager(DetectorManager):
             parameters["Operation"] = DetectorListParameter(group="Median Filter", value="Division", options=["Division", "Subtraction"], editable=True)
             actions["Clear median filter"] = DetectorAction(group="Median Filter", func=self._clearMedianFilter)
             actions["Store median filter"] = DetectorAction(group="Median Filter", func=self._storeMedianFilter)
-            self.__medianFilterCastType = np.float32
             self.__medianFilterOp = numba_matrix_division
 
         super().__init__(detectorInfo, name, fullShape=fullShape, supportedBinnings=[1],
@@ -143,8 +142,7 @@ class XimeaManager(DetectorManager):
 
         # median filter applied only if exists in dictionary and its enabled
         if "medianFilter" in self.imageProcessing:
-            data = self.__medianFilterOp(data.astype(self.__medianFilterCastType), 
-                                        self.imageProcessing["medianFilter"]["content"].astype(self.__medianFilterCastType))
+            data = self.__medianFilterOp(data.astype(np.float32), self.imageProcessing["medianFilter"]["content"].astype(np.float32))
         return data
 
     def getChunk(self):
@@ -233,10 +231,8 @@ class XimeaManager(DetectorManager):
                 self.__mfMaxFrames = value
             elif name == "Operation":
                 if value == "Division":
-                    self.__medianFilterCastType = np.float32
                     self.__medianFilterOp = numba_matrix_division
                 elif value == "Subtraction":
-                    self.__medianFilterCastType = np.float32
                     self.__medianFilterOp = numba_matrix_subtraction
             super().setParameter(name, value)
             return self.parameters
