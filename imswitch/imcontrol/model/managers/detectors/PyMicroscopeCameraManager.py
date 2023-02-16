@@ -156,19 +156,22 @@ class PyMicroscopeCameraManager(DetectorManager):
         elif name == "Exposure":
             self.__camera.set_exposure_time(float(value))
         elif name == "transform":
-            value = value.split()
-            self.__logger.info(value)
-            self.__camera.set_transform(value)
+            # just some formatting
+            settingValue = tuple(["True" == x.replace("(","").replace(")","").replace(" ","") for x in value.split(",")[1:]])
+            self.__camera.set_transform(settingValue)
         else:
+            # microscope setting needs a different formatting,
+            # so we upate the value depending on what needed
+            settingValue = value
             if "(bool)" in name:
-                value = 0 if value == "OFF" else 1
+                settingValue = 0 if value == "OFF" else 1
             elif "(enum)" in name:
-                value = int(value.replace(",", "").split()[0])
+                settingValue = int(value.replace(",", "").split()[0])
             # we have to remove the last part of the parameter name,
             # as it is incompatible with microscope
             settingName = name.split()
             settingName = " ".join(settingName[0: len(settingName)-1])
-            self.__camera.set_setting(settingName, value)
+            self.__camera.set_setting(settingName, settingValue)
         return super().setParameter(name, value)
     
     def crop(self, hpos: int, vpos: int, hsize: int, vsize: int) -> None:
