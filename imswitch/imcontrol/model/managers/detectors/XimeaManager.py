@@ -6,6 +6,7 @@ from ximea.xiapi import Xi_error
 from imswitch.imcontrol.model.interfaces import XimeaSettings
 from imswitch.imcommon.model import initLogger
 from imswitch.imcommon.model.dirtools import UserFileDirs
+from imswitch.imcommon.framework.qt import Timer
 from contextlib import contextmanager
 from numba import vectorize, float32
 from .DetectorManager import (
@@ -78,8 +79,10 @@ class XimeaManager(DetectorManager):
         # prepare parameters
         parameters = {
             'Exposure': DetectorNumberParameter(group='Timings', value=100e-6,
-                                                         valueUnits='s', editable=True),
-
+                                                valueUnits='s', editable=True),
+            'Frame rate': DetectorNumberParameter(group='Timings', value=0,
+                                                valueUnits='FPS', editable=True),
+            
             'Trigger source': DetectorListParameter(group='Trigger settings',
                                                     value=list(self._settings.settings[0].keys())[0],
                                                     options=list(self._settings.settings[0].keys()),
@@ -129,7 +132,23 @@ class XimeaManager(DetectorManager):
         
         # apparently the XiAPI for detecting if camera is in acquisition does not work
         # we need to use a flag
-        self._isAcquiring = False       
+        self._isAcquiring = False
+        self._prevFrameNum = 0
+        self._prevFrameTimestamp = 0
+        self._newFrameNum = 1
+        self._newFrameTimestamp = 1e6
+        
+        self._fpsTimer = Timer()
+        self._fpsTimer.setInterval(250)
+        self._fpsTimer.timeout.connect(self._updateFPS)
+    
+    def _updateFPS(self):
+        fps = (self._newFrameNum - self._prevFrameNum) / ((self._newFrameTimestamp - self._prevFrameTimestamp)*1e-6)
+        self._prevFrameNum = self._newFrameNum
+        self._prevFrameTimestamp = self._newFrameTimestamp
+        if fps > 0:
+            self.setParameter("Frame rate", fps)
+        
     
     @property
     def pixelSizeUm(self):
@@ -138,8 +157,9 @@ class XimeaManager(DetectorManager):
 
     def getLatestFrame(self, is_save=False):
         self._camera.get_image(self._img)
-        data = self._img.get_image_data_numpy()
-
+        self._newFrameNum = self._img.nframe
+        self._newFrameTimestamp = self._img.tsUSec
+        data = self._img.get_image_data_numpy()    
         # median filter applied only if exists in dictionary and its enabled
         if "medianFilter" in self.imageProcessing:
             data = self.__medianFilterOp(data.astype(np.float32), self.imageProcessing["medianFilter"]["content"].astype(np.float32))
@@ -220,9 +240,10 @@ class XimeaManager(DetectorManager):
 
     def setParameter(self, name : str, value):
 
-        # TODO: this is horrible,
-        # find a better way of handling this
-        if (name == "Step size" 
+        # this is horrible, but to handle this better
+        # we are forced to use Python 3.10...
+        if (name == "Step size"
+            or name == 'Frame rate'
             or name == "Number of frames"
             or name == "Operation"):
             if name == "Step size":
@@ -234,6 +255,8 @@ class XimeaManager(DetectorManager):
                     self.__medianFilterOp = numba_matrix_division
                 elif value == "Subtraction":
                     self.__medianFilterOp = numba_matrix_subtraction
+            else:
+                pass
             super().setParameter(name, value)
             return self.parameters
 
@@ -266,9 +289,11 @@ class XimeaManager(DetectorManager):
     def startAcquisition(self):
         self._isAcquiring = True
         self._camera.start_acquisition()
+        self._fpsTimer.start()
 
     def stopAcquisition(self):
         self._isAcquiring = False
+        self._fpsTimer.stop()
         self._camera.stop_acquisition()
     
     def finalize(self) -> None:
