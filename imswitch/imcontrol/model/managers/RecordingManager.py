@@ -9,15 +9,38 @@ import zarr
 import numpy as np
 import tifffile as tiff
 
-from imswitch.imcommon.framework import Signal, SignalInterface, Thread, Worker
+from imswitch.imcommon.framework import (
+    Signal, 
+    SignalInterface, 
+    Thread, 
+    Worker,
+    WorkerBaseSignals,
+    FunctionWorker,
+    thread_worker
+)
 from imswitch.imcommon.model import initLogger
 import abc
 import logging
 
 from imswitch.imcontrol.model.managers.DetectorsManager import DetectorsManager
+from imswitch.imcontrol.model.managers.detectors.DetectorManager import DetectorManager
 
 logger = logging.getLogger(__name__)
 
+class RecordingSignals(WorkerBaseSignals):
+    frameNumberUpdate = Signal(int)
+    timeUpdate = Signal(float)
+
+class StreamingWorker(FunctionWorker):
+    def __init__(self, func, *args, **kwargs):
+        super().__init__(func, *args, **kwargs, SignalsClass=WorkerBaseSignals)
+
+class RecMode(enum.Enum):
+    SpecFrames = 1
+    SpecTime = 2
+    ScanOnce = 3
+    ScanLapse = 4
+    UntilStop = 5
 
 class AsTemporayFile(object):
     """ A temporary file that when exiting the context manager is renamed to its original name. """
@@ -43,14 +66,18 @@ class Storer(abc.ABC):
     def __init__(self, filepath, detectorManager):
         self.filepath = filepath
         self.detectorManager: DetectorsManager = detectorManager
+        self.infinite_record = False
 
     def snap(self, images: Dict[str, np.ndarray], attrs: Dict[str, str] = None):
         """ Stores images and attributes according to the spec of the storer """
         raise NotImplementedError
 
-    def stream(self, data = None, **kwargs):
+    def stream(self, **kwargs) -> None:
         """ Stores data in a streaming fashion. """
         raise NotImplementedError
+    
+    def stopInfiniteRecord(self) -> None:
+        self.infinite_record = False
 
 
 
@@ -102,8 +129,63 @@ class HDF5Storer(Storer):
                 dataset[:, ...] = np.moveaxis(image, 0, -1)
             
                 file.close()
-        
 
+    @thread_worker(worker_class=StreamingWorker, start_thread=False)
+    def stream(self, channel: str, recMode: RecMode, attrs: Dict[str, str], **kwargs) -> None:
+        detector : DetectorManager = self.detectorManager[channel]
+        pixelSize = self.detectorManager[channel].pixelSizeUm
+        
+        def create_dataset(file: h5py.File, shape: tuple) -> h5py.Dataset:
+            dataset = file.create_dataset(channel, shape=shape, dtype=detector.dtype)
+            for key, value in attrs.items():
+                try:
+                    dataset.attrs[key] = value
+                except:
+                    logger.debug(f'Could not put key:value pair {key}:{value} in hdf5 metadata.')
+            dataset.attrs["detector_name"] = channel
+            dataset.attrs["element_size_um"] = pixelSize
+            return dataset
+                
+        with h5py.File(f"{self.filepath}_{channel}.tiff", mode="w") as file:
+            if recMode == RecMode.SpecFrames:
+                totalFrames = kwargs["totalFrames"]
+                framesCounter = 0
+                dataset = create_dataset(file, (totalFrames, *detector.shape))
+                while framesCounter < totalFrames:
+                    frames = detector.getChunk()
+                    if framesCounter + len(frames) >= totalFrames:
+                        # we only collect the remaining frames required,
+                        # and discard the remaining
+                        frames = frames[0: totalFrames - framesCounter]
+                    dataset[framesCounter : len(frames)] = frames
+                    framesCounter += len(frames)
+                    self.frameNumberUpdate.emit(framesCounter)
+            elif recMode == RecMode.SpecTime:
+                totalTime = kwargs["totalTime"]
+                dataset = create_dataset(file, (None, *detector.shape))
+                currentRecTime = 0
+                start = time.time()
+                index = 0
+                while currentRecTime < totalTime:
+                    frames = detector.getChunk()
+                    nframes = len(frames)
+                    dataset[index: nframes] = frames
+                    self.timeUpdate.emit(
+                        np.around(currentRecTime, decimals=2)
+                    )
+                    index += nframes
+                    currentRecTime = time.time() - start
+            elif recMode == RecMode.UntilStop:
+                dataset = create_dataset(file, (None, *detector.shape))
+                index = 0
+                self.infinite_record = True
+                while self.infinite_record:
+                    frames = detector.getChunk()
+                    nframes = len(frames)
+                    dataset[index: nframes] = frames
+                    index += nframes
+                    
+                
 class TiffStorer(Storer):
     """ A storer that stores the images in a series of tiff files """
 
@@ -111,8 +193,42 @@ class TiffStorer(Storer):
         for channel, image in images.items():
             with AsTemporayFile(f'{self.filepath}_{channel}.tiff') as path:
                 tiff.imwrite(path, image,) # TODO: Parse metadata to tiff meta data
-
-
+    
+    @thread_worker(worker_class=StreamingWorker, start_thread=False)
+    def stream(self, channel: str, recMode: RecMode, attrs: Dict[str, str], **kwargs) -> None:
+        # TODO: Parse metadata to tiff meta data
+        detector: DetectorManager = self.detectorManager[channel]
+        pixelSize = self.detectorManager[channel].pixelSizeUm
+        resolution = (1./pixelSize, 1./pixelSize)
+        
+        with tiff.TiffWriter(f'{self.filepath}_{channel}.tiff', append=True) as file:
+            if recMode == RecMode.SpecFrames:
+                totalFrames = kwargs["totalFrames"]
+                framesCounter = 0
+                while framesCounter < totalFrames:
+                    frames = detector.getChunk()
+                    if framesCounter + len(frames) >= totalFrames:
+                        # we only collect the remaining frames required,
+                        # and discard the remaining
+                        frames = frames[0: totalFrames - framesCounter]
+                    file.write(frames, photometric="minisblack", resolution=resolution)
+                    framesCounter += len(frames)
+                    self.frameNumberUpdate.emit(framesCounter)
+                return
+            elif recMode == RecMode.SpecTime:
+                totalTime = kwargs["totalTime"]
+                currentRecTime = 0
+                start = time.time()
+                while currentRecTime < totalTime:
+                    file.write(detector.getChunk(), photometric="minisblack")
+                    self.timeUpdate.emit(
+                        np.around(currentRecTime, decimals=2)
+                    )
+                    currentRecTime = time.time() - start
+            elif recMode == RecMode.UntilStop:
+                self.infinite_record = True
+                while self.infinite_record:
+                    file.write(detector.getChunk(), photometric="minisblack")
 
 class SaveMode(enum.Enum):
     Disk = 1
@@ -156,7 +272,7 @@ class RecordingManager(SignalInterface):
         self.__logger = initLogger(self)
         self.__storerMap = storerMap or DEFAULT_STORER_MAP
         self._memRecordings = {}  # { filePath: bytesIO }
-        self.__detectorsManager = detectorsManager
+        self.__detectorsManager : DetectorsManager = detectorsManager
         self.__record = False
         self.__recordingWorker = RecordingWorker(self)
         self.__thread = Thread()
@@ -198,8 +314,7 @@ class RecordingManager(SignalInterface):
         self.__recordingWorker.recTime = recTime
         self.__recordingWorker.singleMultiDetectorFile = singleMultiDetectorFile
         self.__recordingWorker.singleLapseFile = singleLapseFile
-        self.__detectorsManager.execOnAll(lambda c: c.flushBuffers(),
-                                          condition=lambda c: c.forAcquisition)
+        self.__detectorsManager.execOnAll(lambda c: c.flushBuffers(), condition=lambda c: c.forAcquisition)
         self.__thread.start()
 
     def endRecording(self, emitSignal=True, wait=True):
@@ -207,8 +322,7 @@ class RecordingManager(SignalInterface):
         sigRecordingEnded signal will be emitted. Unless wait is False, this
         method will wait until the recording is complete before returning. """
 
-        self.__detectorsManager.execOnAll(lambda c: c.flushBuffers(),
-                                          condition=lambda c: c.forAcquisition)
+        self.__detectorsManager.execOnAll(lambda c: c.flushBuffers(), condition=lambda c: c.forAcquisition)
 
         if self.__record:
             self.__logger.info('Stopping recording')
@@ -312,21 +426,22 @@ class RecordingManager(SignalInterface):
 
 
 class RecordingWorker(Worker):
-    def __init__(self, recordingManager):
+    def __init__(self, recordingManager: RecordingManager):
         super().__init__()
         self.__logger = initLogger(self)
         self.__recordingManager = recordingManager
-        self.__logger = initLogger(self)
 
     def run(self):
         acqHandle = self.__recordingManager.detectorsManager.startAcquisition()
         try:
             self._record()
-
         finally:
             self.__recordingManager.detectorsManager.stopAcquisition(acqHandle)
 
     def _record(self):
+        files, fileDests, filePaths = self._getFiles()
+                
+        
         if self.saveFormat == SaveFormat.HDF5 or self.saveFormat == SaveFormat.TIFF or self.saveFormat == SaveFormat.ZARR:
             files, fileDests, filePaths = self._getFiles()
 
@@ -635,14 +750,6 @@ class RecordingWorker(Worker):
         newFrames = self.__recordingManager.detectorsManager[detectorName].getChunk()
         newFrames = np.array(newFrames)
         return newFrames
-
-
-class RecMode(enum.Enum):
-    SpecFrames = 1
-    SpecTime = 2
-    ScanOnce = 3
-    ScanLapse = 4
-    UntilStop = 5
 
 
 
