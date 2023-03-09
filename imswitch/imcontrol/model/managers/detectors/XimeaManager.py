@@ -118,17 +118,19 @@ class XimeaManager(DetectorManager):
                 and self.__mfStep is not None
                 and self.__mfMaxFrames is not None):
             
-            parameters["Step size"] = DetectorNumberParameter(group="Median Filter", value=self.__mfStep, valueUnits="µm", editable=True)
-            parameters["Number of frames"] = DetectorNumberParameter(group="Median Filter", value=self.__mfMaxFrames, valueUnits="", editable=True)
+            parameters["Median filter step size"] = DetectorNumberParameter(group="Median Filter", value=self.__mfStep, valueUnits="µm", editable=True)
+            parameters["Median filter stack size"] = DetectorNumberParameter(group="Median Filter", value=self.__mfMaxFrames, valueUnits="", editable=True)
 
             actions["Generate median filter"] = DetectorAction(group="Median Filter", func=self._generateMedianFilter)
-            parameters["Operation"] = DetectorListParameter(group="Median Filter", value="Division", options=["Division", "Subtraction"], editable=True)
+            parameters["Median filter operation"] = DetectorListParameter(group="Median Filter", value="Division", options=["Division", "Subtraction"], editable=True)
             actions["Clear median filter"] = DetectorAction(group="Median Filter", func=self._clearMedianFilter)
             actions["Store median filter"] = DetectorAction(group="Median Filter", func=self._storeMedianFilter)
             self.__medianFilterOp = numba_matrix_division
 
         super().__init__(detectorInfo, name, fullShape=fullShape, supportedBinnings=[1],
                          model=model, parameters=parameters, croppable=True, actions=actions)
+
+        self._frameInterval = parameters["Exposure"].value * 1e6
         
         # apparently the XiAPI for detecting if camera is in acquisition does not work
         # we need to use a flag
@@ -242,20 +244,21 @@ class XimeaManager(DetectorManager):
 
         # this is horrible, but to handle this better
         # we are forced to use Python 3.10...
-        if (name == "Step size"
-            or name == 'Frame rate'
-            or name == "Number of frames"
-            or name == "Operation"):
-            if name == "Step size":
+        if(name in ["Median filter step size", 
+                    "Median filter stack size", 
+                    "Median filter operation", 
+                    "Frame rate"]):
+            if name == "Median filter step size":
                 self.__mfStep = value
-            elif name == "Number of frames":
+            elif name == "Median filter stack size":
                 self.__mfMaxFrames = value
-            elif name == "Operation":
+            elif name == "Median filter operation":
                 if value == "Division":
                     self.__medianFilterOp = numba_matrix_division
                 elif value == "Subtraction":
                     self.__medianFilterOp = numba_matrix_subtraction
             else:
+                # nothing to do
                 pass
             super().setParameter(name, value)
             return self.parameters
@@ -267,6 +270,7 @@ class XimeaManager(DetectorManager):
         if name == "Exposure":
             # value must be translated into microseconds
             ximea_value = int(value*1e6)
+            self._frameInterval = float(ximea_value)
         else:
             for setting in self._settings.settings:
                 if value in setting.keys():
