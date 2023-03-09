@@ -91,6 +91,7 @@ class DetectorManager(SignalInterface):
 
         self._frameStart = (0, 0)
         self._shape = fullShape
+        self._frameInterval = 1000.0
 
         self.__name = name
         self.__model = model
@@ -220,6 +221,12 @@ class DetectorManager(SignalInterface):
     def dtype(self) -> str:
         """ Returns the image numpy data type for correct recording storage. """
         return self._dtype
+    
+    @property
+    def frameInterval(self) -> Tuple[float]:
+        """ The time interval between each frame, specified in microseconds.
+        """
+        return self._frameInterval
 
     @property
     @abstractmethod
