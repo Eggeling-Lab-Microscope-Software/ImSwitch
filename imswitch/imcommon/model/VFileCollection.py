@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from io import IOBase
 from typing import Union
 
+import numpy as np
 import h5py
 
 from imswitch.imcommon.framework import Signal, SignalInterface
@@ -9,7 +10,7 @@ from imswitch.imcommon.framework import Signal, SignalInterface
 
 @dataclass
 class VFileItem:
-    data: Union[IOBase, h5py.File]
+    data: Union[IOBase, h5py.File, np.memmap]
     filePath: str
     savedToDisk: bool
 
@@ -42,6 +43,11 @@ class VFileCollection(SignalInterface):
         elif isinstance(self._data[name].data, h5py.File):
             with open(filePath, 'wb') as file:
                 file.write(self._data[name].data.id.get_file_image())
+        elif isinstance(self._data[name].data, np.memmap):
+            # numpy memory map is already handled at run-time and written back
+            # whenever new changes are applied, so this is just to make sure
+            # that the saveToDisk does not trigger the TypeError exception
+            pass
         else:
             raise TypeError(f'Data has unsupported type "{type(self._data[name].data).__name__}"')
 
