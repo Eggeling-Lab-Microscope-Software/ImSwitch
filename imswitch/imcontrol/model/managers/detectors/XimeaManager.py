@@ -1,13 +1,26 @@
 import numpy as np
 import Pyro5.api
+import re, os
+from tifffile.tifffile import imwrite
 from ximea.xiapi import Xi_error
 from imswitch.imcontrol.model.interfaces import XimeaSettings
 from imswitch.imcommon.model import initLogger
+from imswitch.imcommon.model.dirtools import UserFileDirs
+from imswitch.imcommon.framework.qt import Timer
 from contextlib import contextmanager
-
+from numba import vectorize, float32
 from .DetectorManager import (
     DetectorManager, DetectorNumberParameter, DetectorListParameter, DetectorAction
 )
+from qtpy.QtWidgets import QFileDialog
+
+@vectorize([float32(float32, float32)], cache=True, nopython=True)
+def numba_matrix_division(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    return x / y
+
+@vectorize([float32(float32, float32)], cache=True, nopython=True)
+def numba_matrix_subtraction(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    return x - y
 
 class XimeaManager(DetectorManager):
     """ DetectorManager that deals with the Ximea parameters and frame
@@ -66,8 +79,10 @@ class XimeaManager(DetectorManager):
         # prepare parameters
         parameters = {
             'Exposure': DetectorNumberParameter(group='Timings', value=100e-6,
-                                                         valueUnits='s', editable=True),
-
+                                                valueUnits='s', editable=True),
+            'Frame rate': DetectorNumberParameter(group='Timings', value=0,
+                                                valueUnits='FPS', editable=True),
+            
             'Trigger source': DetectorListParameter(group='Trigger settings',
                                                     value=list(self._settings.settings[0].keys())[0],
                                                     options=list(self._settings.settings[0].keys()),
@@ -107,7 +122,10 @@ class XimeaManager(DetectorManager):
             parameters["Number of frames"] = DetectorNumberParameter(group="Median Filter", value=self.__mfMaxFrames, valueUnits="", editable=True)
 
             actions["Generate median filter"] = DetectorAction(group="Median Filter", func=self._generateMedianFilter)
-            actions["Clear median filter"] = DetectorAction(group="Median Filter", func=self._clearMedianFilter)   
+            parameters["Operation"] = DetectorListParameter(group="Median Filter", value="Division", options=["Division", "Subtraction"], editable=True)
+            actions["Clear median filter"] = DetectorAction(group="Median Filter", func=self._clearMedianFilter)
+            actions["Store median filter"] = DetectorAction(group="Median Filter", func=self._storeMedianFilter)
+            self.__medianFilterOp = numba_matrix_division
 
         super().__init__(detectorInfo, name, fullShape=fullShape, supportedBinnings=[1],
                          model=model, parameters=parameters, croppable=True, actions=actions)
@@ -115,6 +133,22 @@ class XimeaManager(DetectorManager):
         # apparently the XiAPI for detecting if camera is in acquisition does not work
         # we need to use a flag
         self._isAcquiring = False
+        self._prevFrameNum = 0
+        self._prevFrameTimestamp = 0
+        self._newFrameNum = 1
+        self._newFrameTimestamp = 1e6
+        
+        self._fpsTimer = Timer()
+        self._fpsTimer.setInterval(250)
+        self._fpsTimer.timeout.connect(self._updateFPS)
+    
+    def _updateFPS(self):
+        fps = (self._newFrameNum - self._prevFrameNum) / ((self._newFrameTimestamp - self._prevFrameTimestamp)*1e-6)
+        self._prevFrameNum = self._newFrameNum
+        self._prevFrameTimestamp = self._newFrameTimestamp
+        if fps > 0:
+            self.setParameter("Frame rate", fps)
+        
     
     @property
     def pixelSizeUm(self):
@@ -123,11 +157,12 @@ class XimeaManager(DetectorManager):
 
     def getLatestFrame(self, is_save=False):
         self._camera.get_image(self._img)
-        data = self._img.get_image_data_numpy()
-
+        self._newFrameNum = self._img.nframe
+        self._newFrameTimestamp = self._img.tsUSec
+        data = self._img.get_image_data_numpy()    
         # median filter applied only if exists in dictionary and its enabled
         if "medianFilter" in self.imageProcessing:
-            data = (data.astype(np.float32) / self.imageProcessing["medianFilter"]["content"]).astype(np.float32)
+            data = self.__medianFilterOp(data.astype(np.float32), self.imageProcessing["medianFilter"]["content"].astype(np.float32))
         return data
 
     def getChunk(self):
@@ -205,14 +240,23 @@ class XimeaManager(DetectorManager):
 
     def setParameter(self, name : str, value):
 
-        # TODO: this is horrible,
-        # find a better way of handling this
-        if (name == "Step size" 
-            or name == "Number of frames"):
+        # this is horrible, but to handle this better
+        # we are forced to use Python 3.10...
+        if (name == "Step size"
+            or name == 'Frame rate'
+            or name == "Number of frames"
+            or name == "Operation"):
             if name == "Step size":
                 self.__mfStep = value
             elif name == "Number of frames":
                 self.__mfMaxFrames = value
+            elif name == "Operation":
+                if value == "Division":
+                    self.__medianFilterOp = numba_matrix_division
+                elif value == "Subtraction":
+                    self.__medianFilterOp = numba_matrix_subtraction
+            else:
+                pass
             super().setParameter(name, value)
             return self.parameters
 
@@ -245,9 +289,11 @@ class XimeaManager(DetectorManager):
     def startAcquisition(self):
         self._isAcquiring = True
         self._camera.start_acquisition()
+        self._fpsTimer.start()
 
     def stopAcquisition(self):
         self._isAcquiring = False
+        self._fpsTimer.stop()
         self._camera.stop_acquisition()
     
     def finalize(self) -> None:
@@ -285,4 +331,18 @@ class XimeaManager(DetectorManager):
     def _clearMedianFilter(self):
         self.__logger.info("Clearing median filter")
         self.imageProcessing.pop("medianFilter", None)
-        self._dtype = "i2"
+        self._dtype = "i2"        
+    
+    def _storeMedianFilter(self):
+        if "medianFilter" in self.imageProcessing:
+            fileName, fileFilter = QFileDialog.getSaveFileName(parent=None, caption="Save filter", 
+                                                            directory=UserFileDirs.Root, 
+                                                            filter="NumPy file (*.npy);;TIFF (*.tiff)")
+            if fileName:
+                selectedExt = re.search('\((.+?)\)', fileFilter).group(1).replace('*','')
+                if not os.path.splitext(fileName)[1]:
+                    fileName = fileName + selectedExt
+                if "tiff" in selectedExt:
+                    imwrite(fileName, self.imageProcessing["medianFilter"]["content"], dtype=self.imageProcessing["medianFilter"]["content"].dtype)
+                else:
+                    np.save(fileName, self.imageProcessing["medianFilter"]["content"])

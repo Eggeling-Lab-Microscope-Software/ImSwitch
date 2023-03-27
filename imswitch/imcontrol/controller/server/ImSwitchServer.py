@@ -5,6 +5,7 @@ from imswitch.imcommon.framework import Worker
 from imswitch.imcommon.model import initLogger
 from ._serialize import register_serializers
 from fastapi import FastAPI
+from useq import MDASequence
 import uvicorn
 import time
 from functools import wraps
@@ -172,7 +173,7 @@ class ImSwitchServer(Worker):
                     buffer.append(self._channel.get_image(detectorName))
         if not wasAcquiring:
             self._channel.setDetectorAcquisition(detectorName, False)
-        self._channel.sigUpdateImgProcessing.emit(detectorName, "medianFilter", np.median(np.stack(buffer), axis=0).astype(np.float32))
+        self._channel.sigUpdateImgProcessing.emit(detectorName, "medianFilter", np.median(np.stack(buffer), axis=0).astype(np.uint16))
         self.__logger.info("[MedianFilter] ... done!")
 
 
