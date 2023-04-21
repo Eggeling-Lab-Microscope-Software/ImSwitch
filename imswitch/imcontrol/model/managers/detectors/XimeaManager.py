@@ -8,19 +8,12 @@ from imswitch.imcommon.model import initLogger
 from imswitch.imcommon.model.dirtools import UserFileDirs
 from imswitch.imcommon.framework.qt import Timer
 from contextlib import contextmanager
-from numba import vectorize, float32
 from .DetectorManager import (
     DetectorManager, DetectorNumberParameter, DetectorListParameter, DetectorAction
 )
 from qtpy.QtWidgets import QFileDialog
 
-@vectorize([float32(float32, float32)], cache=True, nopython=True)
-def numba_matrix_division(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    return x / y
-
-@vectorize([float32(float32, float32)], cache=True, nopython=True)
-def numba_matrix_subtraction(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    return x - y
+HEADER_SIZE = 276 # bytes
 
 class XimeaManager(DetectorManager):
     """ DetectorManager that deals with the Ximea parameters and frame
@@ -45,7 +38,9 @@ class XimeaManager(DetectorManager):
 
         # open Ximea camera for allowing parameters settings
         self._camera.open_device()
-
+        
+        self._bufferSize = 500
+        
         fullShape = (self._camera.get_width_maximum(),
                      self._camera.get_height_maximum())
 
@@ -78,11 +73,10 @@ class XimeaManager(DetectorManager):
 
         # prepare parameters
         parameters = {
-            'Exposure': DetectorNumberParameter(group='Timings', value=100e-6,
+            'Exposure': DetectorNumberParameter(group='Timings', value=300e-6,
                                                 valueUnits='s', editable=True),
-            'Frame rate': DetectorNumberParameter(group='Timings', value=0,
-                                                valueUnits='FPS', editable=True),
-            
+            'Frame buffer': DetectorNumberParameter(group="Recording", value = self._bufferSize,
+                                                        valueUnits='frames', editable=True),
             'Trigger source': DetectorListParameter(group='Trigger settings',
                                                     value=list(self._settings.settings[0].keys())[0],
                                                     options=list(self._settings.settings[0].keys()),
@@ -125,32 +119,25 @@ class XimeaManager(DetectorManager):
             parameters["Median filter operation"] = DetectorListParameter(group="Median Filter", value="Division", options=["Division", "Subtraction"], editable=True)
             actions["Clear median filter"] = DetectorAction(group="Median Filter", func=self._clearMedianFilter)
             actions["Store median filter"] = DetectorAction(group="Median Filter", func=self._storeMedianFilter)
-            self.__medianFilterOp = numba_matrix_division
+            self.__medianFilterOp = np.divide
 
         super().__init__(detectorInfo, name, fullShape=fullShape, supportedBinnings=[1],
                          model=model, parameters=parameters, croppable=True, actions=actions)
-
+                
+        # each Ximea image has an header containing 276 bytes; 
+        # the total acquisition buffer size
+        # must include these bytes 
+        self._camera.set_acq_buffer_size(self._getMaximumBufferSize())
+        self._camera.set_buffers_queue_size(self._bufferSize)
         self._frameInterval = parameters["Exposure"].value * 1e6
+        
+        self.__dataAccumulator = np.zeros((self._bufferSize // 4, self.shape[1], self.shape[0]), dtype=np.float32)
+        self.__timePoints = np.zeros(self._bufferSize // 4, dtype=np.uint16)
         
         # apparently the XiAPI for detecting if camera is in acquisition does not work
         # we need to use a flag
         self._isAcquiring = False
-        self._prevFrameNum = 0
         self._prevFrameTimestamp = 0
-        self._newFrameNum = 1
-        self._newFrameTimestamp = 1e6
-        
-        self._fpsTimer = Timer()
-        self._fpsTimer.setInterval(250)
-        self._fpsTimer.timeout.connect(self._updateFPS)
-    
-    def _updateFPS(self):
-        fps = (self._newFrameNum - self._prevFrameNum) / ((self._newFrameTimestamp - self._prevFrameTimestamp)*1e-6)
-        self._prevFrameNum = self._newFrameNum
-        self._prevFrameTimestamp = self._newFrameTimestamp
-        if fps > 0:
-            self.setParameter("Frame rate", fps)
-        
     
     @property
     def pixelSizeUm(self):
@@ -159,23 +146,38 @@ class XimeaManager(DetectorManager):
 
     def getLatestFrame(self, is_save=False):
         self._camera.get_image(self._img)
-        self._newFrameNum = self._img.nframe
-        self._newFrameTimestamp = self._img.tsUSec
         data = self._img.get_image_data_numpy()    
         # median filter applied only if exists in dictionary and its enabled
         if "medianFilter" in self.imageProcessing:
-            data = self.__medianFilterOp(data.astype(np.float32), self.imageProcessing["medianFilter"]["content"].astype(np.float32))
+            self.__medianFilterOp(data, self.imageProcessing["medianFilter"]["content"], self.__dataAccumulator[0], dtype=np.float32)
+            return self.__dataAccumulator[0]
         return data
 
     def getChunk(self):
-        return np.stack([self.getLatestFrame()])
+        # we do the if check only one time
+        # to avoid spending time checking everytime
+        # this reduces the time cost but we're forced
+        # to write 2 for loops...
+        if "medianFilter" in self.imageProcessing:
+            for idx in range(self._bufferSize // 4):
+                self._camera.get_image(self._img)
+                self.__timePoints[idx] = self._img.tsUSec - self._prevFrameTimestamp
+                self.__medianFilterOp(self._img.get_image_data_numpy(), self.imageProcessing["medianFilter"]["content"], self.__dataAccumulator[idx], dtype=np.float32)
+                self._prevFrameTimestamp = self._img.tsUSec
+        else:
+            for idx in range(self._bufferSize // 4):
+                self._camera.get_image(self._img)
+                self.__timePoints[idx] = self._img.tsUSec - self._prevFrameTimestamp
+                self.__dataAccumulator[idx] = self._img.get_image_data_numpy()
+                self._prevFrameTimestamp = self._img.tsUSec
+        return (self.__dataAccumulator, self.__timePoints)
 
     def flushBuffers(self):
         pass
     
     @contextmanager
     def _camera_disabled(self):
-        if self._isAcquiring:
+        if self._camera.get_acquisition_status() == "XI_ON":
             try:
                 self.stopAcquisition()
                 yield
@@ -186,7 +188,7 @@ class XimeaManager(DetectorManager):
     
     @contextmanager
     def _camera_enabled(self):
-        if not self._isAcquiring:
+        if self._camera.get_acquisition_status() == "XI_OFF":
             try:
                 self.startAcquisition()
                 yield
@@ -228,7 +230,11 @@ class XimeaManager(DetectorManager):
                 self._camera.set_offsetY(0)
                 self._camera.set_width(self.fullShape[0])
                 self._camera.set_height(self.fullShape[1])
-                
+            # don't forget to change the minimum value of the buffer size
+            # we only need to change the size of the single buffer unit,
+            # not the size of the queue
+            self._camera.set_acq_buffer_size(self._getMaximumBufferSize())
+            self.__dataAccumulator = np.zeros((self._bufferSize // 4, vsize - vpos, hsize - hpos), dtype=np.float32)
         # This should be the only place where self.frameStart is changed
         self._frameStart = (hpos, vpos)
         # Only place self.shapes is changed
@@ -246,17 +252,29 @@ class XimeaManager(DetectorManager):
         # we are forced to use Python 3.10...
         if(name in ["Median filter step size", 
                     "Median filter stack size", 
-                    "Median filter operation", 
-                    "Frame rate"]):
+                    "Median filter operation",
+                    "Frame buffer"]):
             if name == "Median filter step size":
                 self.__mfStep = value
             elif name == "Median filter stack size":
                 self.__mfMaxFrames = value
             elif name == "Median filter operation":
                 if value == "Division":
-                    self.__medianFilterOp = numba_matrix_division
+                    self.__medianFilterOp = np.divide
                 elif value == "Subtraction":
-                    self.__medianFilterOp = numba_matrix_subtraction
+                    self.__medianFilterOp = np.subtract
+            elif name == "Frame buffer":
+                # the actual size of the internal Ximea software queue
+                # is set to 4 times the requested value
+                # to account for the delays in communicating with
+                # the other layers
+                value = min(int(value), self._camera.get_buffers_queue_size_maximum())
+                self._bufferSize = value
+                with self._camera_disabled():
+                    self._camera.set_acq_buffer_size(self._getMaximumBufferSize())
+                    self._camera.set_buffers_queue_size(self._bufferSize)
+                    self.__dataAccumulator = np.zeros((self._bufferSize // 4, self.shape[1], self.shape[0]), dtype=np.float32)
+                    self.__timePoints = np.zeros(self._bufferSize // 4)
             else:
                 # nothing to do
                 pass
@@ -291,17 +309,19 @@ class XimeaManager(DetectorManager):
         return self.parameters
 
     def startAcquisition(self):
-        self._isAcquiring = True
         self._camera.start_acquisition()
-        self._fpsTimer.start()
 
     def stopAcquisition(self):
-        self._isAcquiring = False
-        self._fpsTimer.stop()
         self._camera.stop_acquisition()
     
     def finalize(self) -> None:
         self._camera.close_device()
+
+    def _getMaximumBufferSize(self) -> int:
+        numberOfBytes = (HEADER_SIZE + self._camera.get_imgpayloadsize()) * self._bufferSize
+        if numberOfBytes > self._camera.get_acq_buffer_size_maximum():
+            numberOfBytes = self._camera.get_acq_buffer_size_maximum()
+        return numberOfBytes
 
     def _getCameraObj(self, cameraId):
 
@@ -328,14 +348,14 @@ class XimeaManager(DetectorManager):
             try:
                 with Pyro5.api.Proxy(self.__uri) as proxy:
                     proxy.generateMedianFilter(self.name, self.__mfPositioners, self.__mfStep, self.__mfMaxFrames)
-                    self._dtype = "float32"
+                    self._dtype = np.float32
             except Exception as e:
                 self.__logger.error(f"Could not connect proxy to ImSwitchServer. Error: {e}")
     
     def _clearMedianFilter(self):
         self.__logger.info("Clearing median filter")
         self.imageProcessing.pop("medianFilter", None)
-        self._dtype = "i2"        
+        self._dtype = np.uint16
     
     def _storeMedianFilter(self):
         if "medianFilter" in self.imageProcessing:

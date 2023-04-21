@@ -1,7 +1,11 @@
 try:
-    from ximea.xiapi import Camera
+    from ximea.xiapi import Camera, Image
 except ModuleNotFoundError:
-    from .ximea_mock import MockXimea as Camera
+    from .ximea_mock import MockXimea as Camera, MockImage as Image
+from imswitch.imcommon.framework.qt import Worker, Timer
+from imswitch.imcommon.model import initLogger
+from collections import deque
+from typing import Any
 
 class XimeaSettings:
     """Class for Ximea camera parameters.

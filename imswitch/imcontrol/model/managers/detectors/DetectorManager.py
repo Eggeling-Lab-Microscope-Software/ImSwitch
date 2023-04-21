@@ -1,7 +1,7 @@
 import traceback
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -112,7 +112,7 @@ class DetectorManager(SignalInterface):
         self.setBinning(supportedBinnings[0])
 
         self._imageProcessing = {}
-        self._dtype = "i2"
+        self._dtype = np.uint16
     
     def updateImageProcessing(self, param, object):
         self._imageProcessing[param] = {"content" : object, "enabled": True}
@@ -248,7 +248,7 @@ class DetectorManager(SignalInterface):
         pass
 
     @abstractmethod
-    def getChunk(self) -> np.ndarray:
+    def getChunk(self) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         """ Returns the frames captured by the detector since getChunk was last
         called, or since the buffers were last flushed (whichever happened
         last). The returned object is a numpy array of shape

@@ -52,7 +52,9 @@ _setupFilesDir = os.path.join(dirtools.UserFileDirs.Root, 'imcontrol_setups')
 os.makedirs(_setupFilesDir, exist_ok=True)
 _optionsFilePath = os.path.join(dirtools.UserFileDirs.Config, 'imcontrol_options.json')
 _mmcoreLogDir = os.path.join(dirtools.UserFileDirs.Root, 'imcontrol_mmcore_logs')
+_debugLogDir = os.path.join(dirtools.UserFileDirs.Root, 'imcontrol_debug_logs')
 os.makedirs(_mmcoreLogDir, exist_ok=True)
+os.makedirs(_debugLogDir, exist_ok=True)
 
 _options = None
 
