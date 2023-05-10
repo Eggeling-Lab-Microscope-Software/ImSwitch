@@ -1,7 +1,7 @@
 import traceback
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, NamedTuple
 
 import numpy as np
 
@@ -218,7 +218,7 @@ class DetectorManager(SignalInterface):
         return self._imageProcessing
     
     @property
-    def dtype(self) -> str:
+    def dtype(self) -> Any:
         """ Returns the image numpy data type for correct recording storage. """
         return self._dtype
     

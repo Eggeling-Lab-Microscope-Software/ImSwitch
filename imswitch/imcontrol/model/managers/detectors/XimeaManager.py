@@ -6,14 +6,20 @@ from ximea.xiapi import Xi_error
 from imswitch.imcontrol.model.interfaces import XimeaSettings
 from imswitch.imcommon.model import initLogger
 from imswitch.imcommon.model.dirtools import UserFileDirs
-from imswitch.imcommon.framework.qt import Timer
 from contextlib import contextmanager
 from .DetectorManager import (
     DetectorManager, DetectorNumberParameter, DetectorListParameter, DetectorAction
 )
 from qtpy.QtWidgets import QFileDialog
 
-HEADER_SIZE = 276 # bytes
+# this is a "magic" number taken from
+# trial-and-error approach; it's used
+# to increase the base size of a single
+# image payload in bytes; it depends on many
+# factors so there's no way to calculate it
+# properly
+PAYLOAD_OVERHEAD = 50_000
+CHUNK_SIZE_SPLITTER = 8
 
 class XimeaManager(DetectorManager):
     """ DetectorManager that deals with the Ximea parameters and frame
@@ -24,7 +30,6 @@ class XimeaManager(DetectorManager):
     - ``cameraListIndex`` -- the camera's index in the Ximea camera list
       (list indexing starts at 0); set this to an invalid value, e.g. the
       string "mock" to load a mocker
-    - ``parameters`` -- dictionary of XiAPI properties to pass to the driver
     - ``medianFilter`` -- dictionary of parameters required for median filter acquisition
     - ``server`` -- URI of local ImSwitchServer in the format of host-port (i.e. \"127.0.0.1:54333\") 
     """
@@ -39,15 +44,10 @@ class XimeaManager(DetectorManager):
         # open Ximea camera for allowing parameters settings
         self._camera.open_device()
         
-        self._bufferSize = 500
-        
         fullShape = (self._camera.get_width_maximum(),
                      self._camera.get_height_maximum())
 
         model = self._camera.get_device_info_string("device_name").decode("utf-8")
-
-        for propertyName, propertyValue in detectorInfo.managerProperties['parameters'].items():
-            self._camera.set_param(propertyName, propertyValue)
         
         server = detectorInfo.managerProperties["server"]
         self.__uri = None
@@ -75,8 +75,6 @@ class XimeaManager(DetectorManager):
         parameters = {
             'Exposure': DetectorNumberParameter(group='Timings', value=300e-6,
                                                 valueUnits='s', editable=True),
-            'Frame buffer': DetectorNumberParameter(group="Recording", value = self._bufferSize,
-                                                        valueUnits='frames', editable=True),
             'Trigger source': DetectorListParameter(group='Trigger settings',
                                                     value=list(self._settings.settings[0].keys())[0],
                                                     options=list(self._settings.settings[0].keys()),
@@ -123,21 +121,22 @@ class XimeaManager(DetectorManager):
 
         super().__init__(detectorInfo, name, fullShape=fullShape, supportedBinnings=[1],
                          model=model, parameters=parameters, croppable=True, actions=actions)
-                
-        # each Ximea image has an header containing 276 bytes; 
-        # the total acquisition buffer size
-        # must include these bytes 
-        self._camera.set_acq_buffer_size(self._getMaximumBufferSize())
-        self._camera.set_buffers_queue_size(self._bufferSize)
+        
+        self.__bufferSize = 1000
+        
+        self._camera.set_exposure(300)
+        self._camera.set_acq_buffer_size((self._camera.get_imgpayloadsize() + PAYLOAD_OVERHEAD) * self.__bufferSize)
+        self._camera.set_buffers_queue_size(self.__bufferSize)
+        self._camera.set_acq_frame_burst_count(self.__bufferSize)
+        
+        self.__chunkSize = self.__bufferSize // CHUNK_SIZE_SPLITTER
+        
         self._frameInterval = parameters["Exposure"].value * 1e6
         
-        self.__dataAccumulator = np.zeros((self._bufferSize // 4, self.shape[1], self.shape[0]), dtype=np.float32)
-        self.__timePoints = np.zeros(self._bufferSize // 4, dtype=np.uint16)
+        self._dtype = np.float32
         
-        # apparently the XiAPI for detecting if camera is in acquisition does not work
-        # we need to use a flag
-        self._isAcquiring = False
-        self._prevFrameTimestamp = 0
+        self.__dataAccumulator = np.zeros((self.__chunkSize, *reversed(self.shape)), dtype=self._dtype)
+        self.__timePoints = np.zeros(self.__chunkSize, dtype=np.uint16)
     
     @property
     def pixelSizeUm(self):
@@ -145,32 +144,32 @@ class XimeaManager(DetectorManager):
         return [1, umxpx, umxpx]
 
     def getLatestFrame(self, is_save=False):
-        self._camera.get_image(self._img)
-        data = self._img.get_image_data_numpy()    
-        # median filter applied only if exists in dictionary and its enabled
-        if "medianFilter" in self.imageProcessing:
-            self.__medianFilterOp(data, self.imageProcessing["medianFilter"]["content"], self.__dataAccumulator[0], dtype=np.float32)
-            return self.__dataAccumulator[0]
-        return data
+        if self.parameters["Trigger type"].value == "Frame burst start" and self.parameters["Trigger source"] == "Software":
+            self._camera.set_trigger_software(1)
+        try:
+            self._camera.get_image(self._img)
+            data = self._img.get_image_data_numpy()    
+            # median filter applied only if exists in dictionary and its enabled
+            if "medianFilter" in self.imageProcessing:
+                self.__medianFilterOp(data, self.imageProcessing["medianFilter"]["content"], self.__dataAccumulator[0], dtype=self.dtype)
+                return self.__dataAccumulator[0]
+            return data
+        except Xi_error:
+            # it may happen that while setting parameters acquisition must be stopped;
+            # from here we have no way to pause the live view which calls
+            # the function to retrieve each image, so we just suppress possible
+            # exceptions generated by the interruption of the acquisition
+            return np.empty(self.shape)
 
     def getChunk(self):
-        # we do the if check only one time
-        # to avoid spending time checking everytime
-        # this reduces the time cost but we're forced
-        # to write 2 for loops...
-        if "medianFilter" in self.imageProcessing:
-            for idx in range(self._bufferSize // 4):
-                self._camera.get_image(self._img)
-                self.__timePoints[idx] = self._img.tsUSec - self._prevFrameTimestamp
-                self.__medianFilterOp(self._img.get_image_data_numpy(), self.imageProcessing["medianFilter"]["content"], self.__dataAccumulator[idx], dtype=np.float32)
-                self._prevFrameTimestamp = self._img.tsUSec
-        else:
-            for idx in range(self._bufferSize // 4):
-                self._camera.get_image(self._img)
-                self.__timePoints[idx] = self._img.tsUSec - self._prevFrameTimestamp
-                self.__dataAccumulator[idx] = self._img.get_image_data_numpy()
-                self._prevFrameTimestamp = self._img.tsUSec
-        return (self.__dataAccumulator, self.__timePoints)
+        if self.parameters["Trigger type"].value == "Frame burst start" and self.parameters["Trigger source"] == "Software":
+            self._camera.set_trigger_software(1)
+        for idx in range(self.__chunkSize):
+            self._camera.get_image(self._img)
+            self.__timePoints[idx] = self._img.acq_nframe
+            self.__dataAccumulator[idx] = self._img.get_image_data_numpy()
+        return (self.__dataAccumulator.astype(np.uint16), self.__timePoints)
+        
 
     def flushBuffers(self):
         pass
@@ -202,7 +201,11 @@ class XimeaManager(DetectorManager):
 
         # Ximea ROI (at least for xiB-64) works only if the increment is performed
         # using a multiple of the minimum allowed increment of the sensor.
+        
         with self._camera_disabled():
+            maxPayload = (self._camera.get_width_maximum() * 
+                          self._camera.get_height_maximum() * 
+                          np.dtype(np.uint16).itemsize) + PAYLOAD_OVERHEAD
             if (hsize, vsize) != self.fullShape:
                 try:
                     self.__logger.debug(f"Crop requested: X0 = {hpos}, Y0 = {vpos}, width = {hsize}, height = {vsize}")
@@ -221,24 +224,38 @@ class XimeaManager(DetectorManager):
                     self._camera.set_offsetY(vpos)                
                     
                     self.__logger.debug(f"Increment info: X0_incr = {hpos_incr}, Y0_incr = {vpos_incr}, width_incr = {hsize_incr}, height_inc = {vsize_incr}")
-                    self.__logger.debug(f"Actual crop: X0 = {hpos}, Y0 = {vpos}, width = {hsize}, height = {vsize}")
+                    self.__logger.info(f"Actual crop: X0 = {hpos}, Y0 = {vpos}, width = {hsize}, height = {vsize}")
+                    newPayload = self._camera.get_imgpayloadsize() + PAYLOAD_OVERHEAD
+                    correctionFactor = (maxPayload / newPayload) - 1 # we do -1 in order to not go outside boundaries
+                    self.__bufferSize = int(correctionFactor * 1000)
+                    self.__logger.info(f"New buffer size: {self.__bufferSize}")
                 except Xi_error as error:
                     self.__logger.error(f"Error in setting ROI (X0 = {hpos}, Y0 = {vpos}, width = {hsize}, height = {vsize})")
                     self.__logger.error(error)
+                    newPayload = self._camera.get_imgpayloadsize() + PAYLOAD_OVERHEAD
             else:
                 self._camera.set_offsetX(0)
                 self._camera.set_offsetY(0)
                 self._camera.set_width(self.fullShape[0])
                 self._camera.set_height(self.fullShape[1])
+                newPayload = self._camera.get_imgpayloadsize() + PAYLOAD_OVERHEAD
+                self.__bufferSize = 1000
             # don't forget to change the minimum value of the buffer size
             # we only need to change the size of the single buffer unit,
             # not the size of the queue
-            self._camera.set_acq_buffer_size(self._getMaximumBufferSize())
-            self.__dataAccumulator = np.zeros((self._bufferSize // 4, vsize - vpos, hsize - hpos), dtype=np.float32)
-        # This should be the only place where self.frameStart is changed
-        self._frameStart = (hpos, vpos)
-        # Only place self.shapes is changed
-        self._shape = (hsize, vsize)
+            newPayload = self._camera.get_imgpayloadsize() + PAYLOAD_OVERHEAD
+            self._camera.set_acq_buffer_size(newPayload * self.__bufferSize)
+            self._camera.set_buffers_queue_size(self.__bufferSize)
+            self._camera.set_acq_frame_burst_count(self.__bufferSize)
+            self.__chunkSize = self.__bufferSize // CHUNK_SIZE_SPLITTER
+            self.__logger.info(f"New chunk size: {self.__chunkSize}")
+            # This should be the only place where self.frameStart is changed
+            self._frameStart = (hpos, vpos)
+            # Only place self.shapes is changed
+            self._shape = (hsize, vsize)
+            
+            self.__dataAccumulator = np.zeros((self.__chunkSize, *reversed(self.shape)), dtype=self._dtype)
+            self.__timePoints = np.empty(self.__chunkSize, dtype=np.uint16)
 
     def setBinning(self, binning):
         # todo: Ximea binning works in a different way
@@ -252,8 +269,7 @@ class XimeaManager(DetectorManager):
         # we are forced to use Python 3.10...
         if(name in ["Median filter step size", 
                     "Median filter stack size", 
-                    "Median filter operation",
-                    "Frame buffer"]):
+                    "Median filter operation"]):
             if name == "Median filter step size":
                 self.__mfStep = value
             elif name == "Median filter stack size":
@@ -261,20 +277,11 @@ class XimeaManager(DetectorManager):
             elif name == "Median filter operation":
                 if value == "Division":
                     self.__medianFilterOp = np.divide
+                    self._dtype = np.float32
                 elif value == "Subtraction":
                     self.__medianFilterOp = np.subtract
-            elif name == "Frame buffer":
-                # the actual size of the internal Ximea software queue
-                # is set to 4 times the requested value
-                # to account for the delays in communicating with
-                # the other layers
-                value = min(int(value), self._camera.get_buffers_queue_size_maximum())
-                self._bufferSize = value
-                with self._camera_disabled():
-                    self._camera.set_acq_buffer_size(self._getMaximumBufferSize())
-                    self._camera.set_buffers_queue_size(self._bufferSize)
-                    self.__dataAccumulator = np.zeros((self._bufferSize // 4, self.shape[1], self.shape[0]), dtype=np.float32)
-                    self.__timePoints = np.zeros(self._bufferSize // 4)
+                    self._dtype = np.int16
+                self.__dataAccumulator = np.zeros((self.__chunkSize, *reversed(self.shape)), dtype=self._dtype)
             else:
                 # nothing to do
                 pass
@@ -317,12 +324,6 @@ class XimeaManager(DetectorManager):
     def finalize(self) -> None:
         self._camera.close_device()
 
-    def _getMaximumBufferSize(self) -> int:
-        numberOfBytes = (HEADER_SIZE + self._camera.get_imgpayloadsize()) * self._bufferSize
-        if numberOfBytes > self._camera.get_acq_buffer_size_maximum():
-            numberOfBytes = self._camera.get_acq_buffer_size_maximum()
-        return numberOfBytes
-
     def _getCameraObj(self, cameraId):
 
         try:
@@ -348,14 +349,12 @@ class XimeaManager(DetectorManager):
             try:
                 with Pyro5.api.Proxy(self.__uri) as proxy:
                     proxy.generateMedianFilter(self.name, self.__mfPositioners, self.__mfStep, self.__mfMaxFrames)
-                    self._dtype = np.float32
             except Exception as e:
                 self.__logger.error(f"Could not connect proxy to ImSwitchServer. Error: {e}")
     
     def _clearMedianFilter(self):
         self.__logger.info("Clearing median filter")
         self.imageProcessing.pop("medianFilter", None)
-        self._dtype = np.uint16
     
     def _storeMedianFilter(self):
         if "medianFilter" in self.imageProcessing:

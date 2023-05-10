@@ -1,6 +1,7 @@
 import enum
 import os
 import time
+from datetime import datetime
 from math import ceil
 from io import BytesIO
 from typing import Dict, List, Tuple, Optional, Type
@@ -13,10 +14,10 @@ import numpy as np
 import tifffile as tiff
 
 from imswitch.imcommon.framework import (
-    Signal, 
+    Signal,
     SignalInterface,
     FunctionWorker,
-    create_worker
+    create_worker,
 )
 from imswitch.imcommon.model import initLogger
 import logging
@@ -83,15 +84,15 @@ class Storer(SignalInterface):
         self.detectorsManager = detectorsManager
         self.frameCount : int = 0
         self.timeCount : float = 0.0
-        self.__record = False
+        self._record = False
     
     @property
     def record(self) -> bool:
-        return self.__record
+        return self._record
 
     @record.setter
     def record(self, record: bool):
-        self.__record = record
+        self._record = record
 
     def snap(self, images: Dict[str, np.ndarray], attrs: Dict[str, str] = None):
         """ Stores images and attributes according to the spec of the storer """
@@ -173,10 +174,19 @@ class HDF5Storer(Storer):
         detector : DetectorManager = self.detectorsManager[channel]
         pixelSize = detector.pixelSizeUm
         self.record = True
-        frameTimePoints = []
+        frameNumberWindow = []
         
-        def create_dataset(file: h5py.File, shape: tuple) -> h5py.Dataset:
-            dataset = file.create_dataset("data", shape=shape, maxshape=(None, *shape[1:]), dtype=detector.dtype)
+        def create_dataset(file: h5py.File, shape: tuple, name: str = "data", dtype = detector.dtype, compression: str = None) -> Tuple[h5py.Dataset, h5py.Dataset]:
+            """ Create a frame dataset and a frame ID dataset to store recordings.
+
+            Args:
+                file (h5py.File): file handler
+                shape (tuple): size of the video to record
+
+            Returns:
+                h5py.Dataset: the created dataset
+            """
+            dataset = file.create_dataset(name, shape=shape, maxshape=(None, *shape[1:]), dtype=dtype, compression=compression)
             for key, value in attrs.items():
                 try:
                     dataset.attrs[key] = value
@@ -192,17 +202,16 @@ class HDF5Storer(Storer):
                 self.frameCount = 0
                 dataset = create_dataset(file, (totalFrames, *reversed(detector.shape)))
                 while self.frameCount < totalFrames and self.record:
-                    frames, timePoints = self.unpackChunk(detector)
+                    frames, frameIDs = self.unpackChunk(detector)
                     if self.frameCount + len(frames) > totalFrames:
                         # we only collect the remaining frames required,
                         # and discard the remaining
                         frames = frames[0: totalFrames - self.frameCount]
                         timePoints = timePoints[0: totalFrames - self.frameCount]
                     dataset[self.frameCount : len(frames)] = frames
-                    frameTimePoints.extend(timePoints)
+                    frameNumberWindow.extend(frameIDs)
                     self.frameCount += len(frames)
                     self.frameNumberUpdate.emit(channel, self.frameCount)
-                dataset.attrs["ΔT"] = frameTimePoints
             elif recMode == RecMode.SpecTime:
                 timeUnit = detector.frameInterval # us
                 totalTime = kwargs["totalTime"] # s
@@ -212,15 +221,14 @@ class HDF5Storer(Storer):
                 start = time.time()
                 index = 0
                 while index < totalFrames and self.record:
-                    frames, timePoints = self.unpackChunk(detector)
+                    frames, frameIDs = self.unpackChunk(detector)
                     nframes = len(frames)
                     dataset[index: nframes] = frames
-                    frameTimePoints.extend(timePoints)
+                    frameNumberWindow.extend(frameIDs)
                     self.timeCount = np.around(currentRecTime, decimals=2)
                     self.timeUpdate.emit(channel, min(self.timeCount, totalTime))
                     index += nframes
                     currentRecTime = time.time() - start
-                dataset.attrs["ΔT"] = frameTimePoints
                 # we may have not used up the entirety of the HDF5 size,
                 # so we resize the dataset to the value of "index"
                 # in case this is lower than totalFrames
@@ -238,14 +246,34 @@ class HDF5Storer(Storer):
                 dataset = create_dataset(file, (totalFrames, *detector.shape))
                 index = 0
                 while self.record:
-                    frames, timePoints = self.unpackChunk(detector)
+                    frames, frameIDs = self.unpackChunk(detector)
                     nframes = len(frames)
                     if nframes > index:
                         dataset.resize(index + totalFrames, axis=0)                    
                     dataset[index: nframes] = frames
-                    frameTimePoints.extend(timePoints)
-                    index += nframes
-                dataset.attrs["ΔT"] = frameTimePoints
+                    frameNumberWindow.extend(frameIDs)
+                    index += nframes            
+            # we write the ids to a separate dataset;
+            # after testing, for large recordings we go 
+            # over the maximum attribute size of 64k,
+            # so we just write the data separately
+            file.create_dataset("data_id", data=frameNumberWindow)
+            if detector.dtype == np.int16:
+                new_dset = create_dataset(file, file["data"].shape, "data1", dtype=np.float32)
+                new_dset[:] = dataset[:]
+                del file["data"]
+            if len(detector.imageProcessing) > 0:
+                for key, value in detector.imageProcessing.items():
+                    file.create_dataset(key, data=value["content"])
+        
+        # we check that all frame IDs are equidistant
+        if np.all(frameNumberWindow == 0):
+            logger.warning(f"[REC:{detector.name}] No frame IDs were provided for {detector.name}.")
+        elif not np.all(np.ediff1d(frameNumberWindow) == 1):
+            dbgPath = os.path.join(_debugLogDir, f"frame_id_differences_{detector.name}.txt")
+            logger.error(f"[REC:{detector.name}] Frames lost. Frame interval: {detector.frameInterval} μs")
+            logger.error(f"[REC:{detector.name}] You can find the frame ID list in {dbgPath}")
+            np.savetxt(os.path.join(_debugLogDir, f"frame_id_differences_{detector.name}.txt"), np.ediff1d(frameNumberWindow), fmt="%d")
                     
                 
 class TiffStorer(Storer):
@@ -260,75 +288,80 @@ class TiffStorer(Storer):
         # TODO: Parse metadata to tiff meta data
         detector: DetectorManager = self.detectorsManager[channel]
         _, physicalYSize, physicalXSize = self.detectorsManager[channel].pixelSizeUm
-        # resolution = (physicalYSize, 1./physicalXSize)
-        frameTimePoints = []
+        frameNumberWindow = []
         
         self.record = True
+        date = datetime.now()
+        
+        imageMetadata = dict(
+            Name = detector.name,
+            AcquisitionDate = date.strftime("%d-%m-%Y %H:%M:%S"),
+            TimeIncrement = detector.frameInterval,
+            TimeIncrementUnit = 'µs',
+            PhysicalSizeX = physicalXSize,
+            PhysicalSizeXUnit = 'µm',
+            PhysicalSizeY = physicalYSize,
+            PhysicalSizeYUnit = 'µm'
+        )
+        metadata = dict(
+            Image = imageMetadata
+        )
         
         with tiff.TiffWriter(self.filepath, ome=False, bigtiff=True) as file:
             if recMode == RecMode.SpecFrames:
                 totalFrames = kwargs["totalFrames"]
                 while self.frameCount < totalFrames and self.record:
-                    frames, timePoints = self.unpackChunk(detector)
+                    frames, frameIDs = self.unpackChunk(detector)
                     if self.frameCount + len(frames) >= totalFrames:
                         # we only collect the remaining frames required,
                         # and discard the remaining
                         frames = frames[0: totalFrames - self.frameCount]
-                        timePoints = timePoints[0: totalFrames - self.frameCount]
-                    file.write(frames.reshape((len(frames), 1, *frames.shape[1:])),  photometric="minisblack", contiguous=True, description="", metadata=None) #, resolution=resolution)
-                    frameTimePoints.extend(timePoints)
+                        frameIDs = frameIDs[0: totalFrames - self.frameCount]
+                    file.write(frames,  photometric="minisblack", description="", metadata=None)
+                    frameNumberWindow.extend(frameIDs)
                     self.frameCount += len(frames)
                     self.frameNumberUpdate.emit(channel, self.frameCount)
             elif recMode == RecMode.SpecTime:
                 timeUnit = detector.frameInterval # us
                 totalTime = kwargs["totalTime"] # s
                 totalFrames = int(ceil(totalTime * 1e6 / timeUnit))
+                logger.info(f"Recording time: {totalTime} s @{timeUnit} μs -> {totalFrames} frames")
                 currentRecTime = 0
                 start = time.time()
                 index = 0
                 while index < totalFrames and self.record:
-                    frames, timePoints = self.unpackChunk(detector)
-                    file.write(frames.reshape((len(frames), 1, *frames.shape[1:])), photometric="minisblack", contiguous=True, description="", metadata=None) #, resolution=resolution)
-                    frameTimePoints.extend(timePoints)
+                    frames, frameIDs = self.unpackChunk(detector)
+                    file.write(frames, description='', metadata=None)
+                    frameNumberWindow.extend(frameIDs)
                     self.timeCount = np.around(currentRecTime, decimals=2)
                     self.timeUpdate.emit(channel, min(self.timeCount, totalTime))
                     currentRecTime = time.time() - start
+                    index += len(frames)
                 self.frameCount = totalFrames
             elif recMode == RecMode.UntilStop:
                 while self.record:
-                    frames, timePoints = self.unpackChunk(detector)
-                    file.write(frames.reshape((len(frames), 1, *frames.shape[1:])), photometric="minisblack", contiguous=True, description="", metadata=None) #, resolution=resolution)
-                    frameTimePoints.extend(timePoints)
+                    frames, frameIDs = self.unpackChunk(detector)
+                    file.write(frames, description='', metadata=None)
+                    frameNumberWindow.extend(frameIDs)
                     self.frameCount += len(frames)
         
-            # after recording, we need to ensure that all time points
-            # are coherent with the frame interval specified by the detector
-            # we check if we are within a 1 μs tolerance range
-            if not np.all(np.isclose(frameTimePoints[1:], detector.frameInterval, atol=1)):
-                logger.error(f"Frames were lost. Writing {detector.frameInterval} μs as time interval.")
-                with open(os.path.join(_debugLogDir, "tiff_recording_timepoints.log"), 'w') as f:
-                    for item in frameTimePoints:
-                        f.write(f"{item}\n")
-            else:
-                logger.info("No frames lost!")
-                with open(os.path.join(_debugLogDir, "tiff_recording_timepoints.log"), 'w') as f:
-                    for item in frameTimePoints:
-                        f.write(f"{item}\n")
-            omexml = tiff.OmeXml()
+            # we check that all frame IDs are equidistant
+            if np.all(frameNumberWindow == 0):
+                logger.error(f"[REC:{detector.name}] No frame IDs were provided for {detector.name}.")
+            elif not np.all(np.ediff1d(frameNumberWindow) == 1):
+                logger.error(f"[REC:{detector.name}] Frames lost. Frame interval: {detector.frameInterval} μs")
+            omexml = tiff.OmeXml(
+                Creator = "ImSwitch"
+            )
             omexml.addimage(
                 dtype=detector.dtype,
-                shape=(self.frameCount, *detector.shape),
-                storedshape=(self.frameCount, 1, 1, *detector.shape, 1),
+                shape=(self.frameCount, *reversed(detector.shape)),
+                storedshape=(self.frameCount, 1, 1, *reversed(detector.shape), 1),
                 axes='TYX',
-                TimeIncrement=detector.frameInterval,
-                TimeIncrementUnit='μs',
-                PhysicalSizeX = physicalXSize,
-                PhysicalSizeXUnit = 'µm',
-                PhysicalSizeY = physicalYSize,
-                PhysicalSizeYUnit = 'µm'
+                metadata=metadata
             )
-            description = omexml.tostring(declaration=True).encode()
-            file.overwrite_description(description)
+            description = omexml.tostring(declaration=True)
+            file.overwrite_description(description.encode())
 
 class BytesIOStorer(Storer):
     """Storer class for local RAM data. Uses BytesIO to stream images from detectors
@@ -336,6 +369,7 @@ class BytesIOStorer(Storer):
     """    
     def stream(self, channel: str, recMode: RecMode, attrs: Dict[str, str], **kwargs) -> None:
         # TODO: parse metadata... does it make sense?
+        # TODO: add storage of frame ID
         memRecording: BytesIO = kwargs["fileDests"][channel]
         detector: DetectorManager = self.detectorsManager[channel]
         
@@ -344,7 +378,7 @@ class BytesIOStorer(Storer):
             if recMode == RecMode.SpecFrames:
                 totalFrames = kwargs["totalFrames"]
                 while self.frameCount < totalFrames and self.record:
-                    frames = detector.getChunk()
+                    frames, _ = self.unpackChunk(detector)
                     if self.frameCount + len(frames) >= totalFrames:
                         # we only collect the remaining frames required,
                         # and discard the remaining
@@ -358,17 +392,17 @@ class BytesIOStorer(Storer):
                 currentRecTime = 0
                 start = time.time()
                 while currentRecTime < totalTime and self.record:
-                    frames = detector.getChunk()
+                    frames, _ = self.unpackChunk(detector)
                     memRecording.write(frames)
                     self.timeCount = np.around(currentRecTime, decimals=2)
                     self.timeUpdate.emit(channel, self.timeCount)
                     currentRecTime = time.time() - start
             elif recMode == RecMode.UntilStop:
                 while self.record:
-                    frames = detector.getChunk()
+                    frames, _ = self.unpackChunk(detector)
                     memRecording.write(frames)
 
-DEFAULT_STORER_MAP: Dict[str, Type[Storer]] = {
+DEFAULT_STORER_MAP: Dict[SaveFormat, Type[Storer]] = {
     SaveFormat.ZARR: ZarrStorer,
     SaveFormat.HDF5: HDF5Storer,
     SaveFormat.TIFF: TiffStorer
@@ -401,7 +435,10 @@ class RecordingManager(SignalInterface):
         self.__totalThreads = 0
         self.__recordingHandle = None
         self.__storersList : List[Storer] = []
-        self.__storerThreads : List[StreamingWorker] = [] 
+        self.__storerThreads : List[StreamingWorker] = []
+        self.__wasLiveActive = False
+        self.__oldLiveHandle = None
+        self.sigRecordingEnded.connect(self._resumeLiveView)
 
     def __del__(self):
         self.endRecording(emitSignal=False, wait=True)
@@ -479,6 +516,29 @@ class RecordingManager(SignalInterface):
         self.__threadCount += 1
         if self.__threadCount == self.__totalThreads:
             self.sigRecordingEnded.emit()
+            self.sigRecordingFrameNumUpdated.emit(0)
+            self.sigRecordingTimeUpdated.emit(0)
+    
+    def _resumeLiveView(self) -> None:
+        if self.__wasLiveActive:
+            self.__detectorsManager.startAcquisition(liveView=True)
+            self.__wasLiveActive = False
+            # we're now doing an hack...
+            # the ViewController still believes
+            # that the live view was active, and
+            # in case the user wants to stop the
+            # live view from the UI, the detectors
+            # manager expects to find the same 
+            # handle value; but the handle value
+            # is randomly generated! hence we write back
+            # the original hande value,
+            # in order to override the handle randomly
+            # generated by the startAcquisition call;
+            # this is a bad hack, and is something
+            # that should be reviewed with the architecture
+            self.__detectorsManager._activeAcqLVHandles[0] = self.__oldLiveHandle
+            
+            
 
     def startRecording(self, 
                        detectorNames: List[str], 
@@ -551,6 +611,15 @@ class RecordingManager(SignalInterface):
         
         self.__logger.info('Starting recording')
         self.__record = True
+        self.__wasLiveActive = len(self.__detectorsManager._activeAcqLVHandles) == 1
+        
+        if self.__wasLiveActive:
+            # we have to temporarely interrupt the live view, as for very fast acquisitions
+            # the frames captured by the live thread will create gaps in the
+            # video recording; having contigous recordings is necessary for applications
+            # requiring specific timestamps
+            self.__oldLiveHandle = self.__detectorsManager._activeAcqLVHandles[0]
+            self.__detectorsManager.stopAcquisition(self.__oldLiveHandle, liveView=True)
         
         self.__recordingHandle = self.__detectorsManager.startAcquisition()
         self.sigRecordingStarted.emit()

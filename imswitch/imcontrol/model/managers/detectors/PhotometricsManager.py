@@ -6,7 +6,7 @@ from numba import vectorize, float32
 from imswitch.imcommon.model import initLogger
 from imswitch.imcommon.model.dirtools import UserFileDirs
 from .DetectorManager import (
-    DetectorManager, DetectorNumberParameter, DetectorListParameter, DetectorAction
+    DetectorManager, DetectorNumberParameter, DetectorListParameter, DetectorAction, ChunkTuple
 )
 from qtpy.QtWidgets import QFileDialog
 
@@ -119,6 +119,9 @@ class PhotometricsManager(DetectorManager):
                          model=model, parameters=parameters, croppable=True, actions=actions)
         self._updatePropertiesFromCamera()
         super().setParameter('Set exposure time', self.parameters['Real exposure time'].value)
+        
+        self.__chunkFrames = np.empty((self.__chunkFramesSize, *reversed(self.shape)))
+        self.__frameIDs = np.empty((self.__chunkFramesSize), dtype=np.uint16)
 
     @property
     def pixelSizeUm(self):
@@ -139,18 +142,12 @@ class PhotometricsManager(DetectorManager):
             return self.image
 
     def getChunk(self):
-        chunkFrames = [] 
-        status = self._camera.check_frame_status()
-        try:
-            if not status == "READOUT_NOT_ACTIVE":
-                for _ in range(self.__chunkFramesSize):
-                    im = np.array(self._camera.poll_frame()[0]['pixel_data'])
-                    if "medianFilter" in self.imageProcessing:
-                        im = self.__medianFilterOp(im.astype(np.float32), self.imageProcessing["medianFilter"]["content"].astype(np.float32))
-                    chunkFrames.append(im)
-        except RuntimeError:
-            pass
-        return chunkFrames
+        for idx in range(self.__chunkFramesSize):
+            pixels, _, frameID = self._camera.poll_frame()
+            self.__chunkFrames[idx], self.__frameIDs[idx] = pixels["pixel_data"], frameID
+            if "medianFilter" in self.imageProcessing:
+                self.__medianFilterOp(self.__chunkFrames[idx], self.imageProcessing["medianFilter"]["content"], self.__chunkFrames[idx])
+        return (self.__chunkFrames, self.__frameIDs)
 
     def flushBuffers(self):
         pass
@@ -167,6 +164,7 @@ class PhotometricsManager(DetectorManager):
         newReadoutTime = float(self._camera.readout_time * 1e-6)
         super().setParameter('Readout time', newReadoutTime)
         super().setParameter('Frame rate', round(1.0 / newReadoutTime, 2))
+        self.__chunkFrames = np.empty((self.__chunkFramesSize, *reversed(self.shape)))
 
     def setBinning(self, binning):
         super().setBinning(binning)
@@ -179,6 +177,8 @@ class PhotometricsManager(DetectorManager):
         
         if name == 'Chunk of frames':
             self.__chunkFramesSize = int(value)
+            self.__chunkFrames = np.empty((self.__chunkFramesSize, *reversed(self.shape)))
+            self.__frameIDs = np.empty((self.__chunkFramesSize))
         elif name == 'Set exposure time':
             self._setExposure(value)
             self._updatePropertiesFromCamera()
@@ -192,7 +192,7 @@ class PhotometricsManager(DetectorManager):
 
     def startAcquisition(self):
         self.__acquisition = True
-        self._camera.start_live()
+        self._camera.start_live(buffer_frame_count=self.__chunkFramesSize)
 
     def stopAcquisition(self):
         self.__acquisition = False
@@ -203,14 +203,8 @@ class PhotometricsManager(DetectorManager):
         
         self._camera.exp_time = int(time * 1e6)
         
-        def updateRealExposureTime():
-            # needed only to update real exposure time
-            # for proper visualization
-            pass
-        
-        self._performSafeCameraAction(updateRealExposureTime)
         newReadoutTime = float(self._camera.readout_time * 1e-6)
-        super().setParameter('Real exposure time', float(self._camera.last_exp_time * 1e-6))
+        super().setParameter('Real exposure time', float(self._camera.exp_time * 1e-6))
         super().setParameter('Readout time', newReadoutTime)
         super().setParameter('Frame rate', round(1.0 / newReadoutTime, 2))
     
@@ -246,7 +240,7 @@ class PhotometricsManager(DetectorManager):
         super().setParameter('Frame rate', round(1.0 / newReadoutTime, 2))
 
     def _updatePropertiesFromCamera(self):
-        newReadoutTime = float(self._camera.readout_time * 1e-6)
+        newReadoutTime = float(self._camera.readout_time * 1e-6) + float(self._camera.exp_time)
         super().setParameter('Readout time', newReadoutTime)
         super().setParameter('Frame rate', round(1.0 / newReadoutTime, 2))
         readoutPort = self._camera.readout_port
@@ -294,7 +288,6 @@ class PhotometricsManager(DetectorManager):
             try:
                 with Pyro5.api.Proxy(self.__uri) as proxy:
                     proxy.generateMedianFilter(self.name, self.__mfPositioners, self.__mfStep, self.__mfMaxFrames)
-                    self._dtype = "float32"
             except Exception as e:
                 self.__logger.error(f"Could not connect proxy to ImSwitchServer. Error: {e}")
     
