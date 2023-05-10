@@ -6,7 +6,7 @@ from numba import vectorize, float32
 from imswitch.imcommon.model import initLogger
 from imswitch.imcommon.model.dirtools import UserFileDirs
 from .DetectorManager import (
-    DetectorManager, DetectorNumberParameter, DetectorListParameter, DetectorAction, ChunkTuple
+    DetectorManager, DetectorNumberParameter, DetectorListParameter, DetectorAction
 )
 from qtpy.QtWidgets import QFileDialog
 
