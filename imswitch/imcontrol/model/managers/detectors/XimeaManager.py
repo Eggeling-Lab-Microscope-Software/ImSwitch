@@ -226,7 +226,7 @@ class XimeaManager(DetectorManager):
                     self.__logger.debug(f"Increment info: X0_incr = {hpos_incr}, Y0_incr = {vpos_incr}, width_incr = {hsize_incr}, height_inc = {vsize_incr}")
                     self.__logger.info(f"Actual crop: X0 = {hpos}, Y0 = {vpos}, width = {hsize}, height = {vsize}")
                     newPayload = self._camera.get_imgpayloadsize() + PAYLOAD_OVERHEAD
-                    correctionFactor = (maxPayload / newPayload) - 1 # we do -1 in order to not go outside boundaries
+                    correctionFactor = (maxPayload / newPayload) - 0.5 # we do -0.5 in order to not go outside boundaries
                     self.__bufferSize = int(correctionFactor * 1000)
                     self.__logger.info(f"New buffer size: {self.__bufferSize}")
                 except Xi_error as error:
