@@ -137,6 +137,11 @@ class XimeaManager(DetectorManager):
         
         self.__dataAccumulator = np.zeros((self.__chunkSize, *reversed(self.shape)), dtype=self._dtype)
         self.__timePoints = np.zeros(self.__chunkSize, dtype=np.uint16)
+        
+        # apparently when multiple cameras are controlled within the same setup,
+        # the Ximea API used for checking if the camera is acquiring goes crazy;
+        # so we'll keep a local flag
+        self.__isAcquiring = False
     
     @property
     def pixelSizeUm(self):
@@ -176,7 +181,7 @@ class XimeaManager(DetectorManager):
     
     @contextmanager
     def _camera_disabled(self):
-        if self._camera.get_acquisition_status() == "XI_ON":
+        if self.__isAcquiring:
             try:
                 self.stopAcquisition()
                 yield
@@ -187,7 +192,7 @@ class XimeaManager(DetectorManager):
     
     @contextmanager
     def _camera_enabled(self):
-        if self._camera.get_acquisition_status() == "XI_OFF":
+        if not self.__isAcquiring:
             try:
                 self.startAcquisition()
                 yield
@@ -316,9 +321,11 @@ class XimeaManager(DetectorManager):
         return self.parameters
 
     def startAcquisition(self):
+        self.__isAcquiring = True
         self._camera.start_acquisition()
 
     def stopAcquisition(self):
+        self.__isAcquiring = False
         self._camera.stop_acquisition()
     
     def finalize(self) -> None:
