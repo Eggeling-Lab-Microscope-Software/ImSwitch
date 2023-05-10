@@ -207,8 +207,8 @@ class HDF5Storer(Storer):
                         # we only collect the remaining frames required,
                         # and discard the remaining
                         frames = frames[0: totalFrames - self.frameCount]
-                        timePoints = timePoints[0: totalFrames - self.frameCount]
-                    dataset[self.frameCount : len(frames)] = frames
+                        frameIDs = frameIDs[0: totalFrames - self.frameCount]
+                    dataset[self.frameCount : self.frameCount + len(frames)] = frames
                     frameNumberWindow.extend(frameIDs)
                     self.frameCount += len(frames)
                     self.frameNumberUpdate.emit(channel, self.frameCount)
@@ -223,7 +223,7 @@ class HDF5Storer(Storer):
                 while index < totalFrames and self.record:
                     frames, frameIDs = self.unpackChunk(detector)
                     nframes = len(frames)
-                    dataset[index: nframes] = frames
+                    dataset[index: index + nframes] = frames
                     frameNumberWindow.extend(frameIDs)
                     self.timeCount = np.around(currentRecTime, decimals=2)
                     self.timeUpdate.emit(channel, min(self.timeCount, totalTime))
@@ -243,7 +243,7 @@ class HDF5Storer(Storer):
                 timeUnit = detector.frameInterval # us
                 totalTime = 1e6 # us
                 totalFrames = int(ceil(totalTime / timeUnit))
-                dataset = create_dataset(file, (totalFrames, *detector.shape))
+                dataset = create_dataset(file, (totalFrames, *reversed(detector.shape)))
                 index = 0
                 while self.record:
                     frames, frameIDs = self.unpackChunk(detector)
