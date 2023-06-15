@@ -145,8 +145,6 @@ class PhotometricsManager(DetectorManager):
         for idx in range(self.__chunkFramesSize):
             pixels, _, frameID = self._camera.poll_frame()
             self.__chunkFrames[idx], self.__frameIDs[idx] = pixels["pixel_data"], frameID
-            if "medianFilter" in self.imageProcessing:
-                self.__medianFilterOp(self.__chunkFrames[idx], self.imageProcessing["medianFilter"]["content"], self.__chunkFrames[idx])
         return (self.__chunkFrames, self.__frameIDs)
 
     def flushBuffers(self):
