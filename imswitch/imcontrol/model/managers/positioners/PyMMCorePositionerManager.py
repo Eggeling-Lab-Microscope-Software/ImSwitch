@@ -103,17 +103,5 @@ class PyMMCorePositionerManager(PositionerManager):
         self._position = self.__coreManager.setStageOrigin(self.name, self.__stageType, self.axes)
     
     def finalize(self) -> None:
-        if self.storePosition:
-            self.__logger.info("Storing current position in setup file...")
-            options, optionsDidNotExist = loadOptions()
-            if not optionsDidNotExist:
-                # options found
-                setupInfo = loadSetupInfo(options, SetupInfo)
-                setupInfo.positioners[self.name].startPositions = self.position
-                saveSetupInfo(options, setupInfo)
-                self.__logger.info("... done!")
-            else:
-                # options not found
-                self.__logger.error("... could not find setup file! Skipping.")
         self.__logger.info(f"Closing {self.name}.")
         self.__coreManager.unloadDevice(self.name)
