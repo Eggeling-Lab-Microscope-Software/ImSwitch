@@ -143,7 +143,7 @@ class PhotometricsManager(DetectorManager):
 
     def getChunk(self):
         for idx in range(self.__chunkFramesSize):
-            pixels, _, frameID = self._camera.poll_frame()
+            pixels, _, frameID = self._camera.poll_frame(copyData=False)
             self.__chunkFrames[idx], self.__frameIDs[idx] = pixels["pixel_data"], frameID
         return (self.__chunkFrames, self.__frameIDs)
 
