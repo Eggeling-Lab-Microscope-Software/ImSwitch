@@ -76,9 +76,10 @@ class FLIRCameraManager(DetectorManager):
 
         # TODO: make this a parameter
         self.__readTimeout = 100
+        initialExposure = 20 # us
 
         parameters = {
-            "Exposure" : DetectorNumberParameter(group="Timings", value=100e-6, editable=True, valueUnits="s"),
+            "Exposure" : DetectorNumberParameter(group="Timings", value=initialExposure * 1e-6, editable=True, valueUnits="s"),
             "Acquisition mode" : DetectorListParameter(group="Trigger settings", 
                                                         value="Continous", 
                                                         editable=True, 
@@ -108,7 +109,7 @@ class FLIRCameraManager(DetectorManager):
         self.__camera.OffsetY.SetValue(0)
         self.__camera.Width.SetValue(self.__camera.Width.GetMax())
         self.__camera.Height.SetValue(self.__camera.Height.GetMax())
-        self.__camera.ExposureTime.SetValue(100) # microseconds
+        self.__camera.ExposureTime.SetValue(initialExposure) # microseconds
         self.__camera.AcquisitionMode.SetValue(self.acquisitionMode["Continous"])
         self.__camera.TriggerSource.SetValue(self.triggerSelector["Acquisition start"])
         self.__camera.PixelFormat.SetValue(self.pixelFormat["Mono16"])
@@ -195,6 +196,8 @@ class FLIRCameraManager(DetectorManager):
         pass
     
     def crop(self, hpos: int, vpos: int, hsize: int, vsize: int) -> None:
+
+        self.__logger.debug(f"Crop requested: w = {hsize}, h = {vsize}")
 
         if hpos + hsize > self.__camera.Width.GetMax():
             self.__logger.error(f"Horizontal positions invalid (offset: {hpos}, width: {hsize}); aborting")
