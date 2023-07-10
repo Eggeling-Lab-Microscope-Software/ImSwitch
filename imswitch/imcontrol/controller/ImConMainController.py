@@ -73,7 +73,6 @@ class ImConMainController(MainController):
 
         if setupInfo.pyroServerInfo.active:
             self._serverWorker = ImSwitchServer(self.__api, setupInfo, self.__commChannel)
-            self.__logger.debug(self.__api)
             self._thread = Thread()
             self._serverWorker.moveToThread(self._thread)
             self._thread.started.connect(self._serverWorker.run)
