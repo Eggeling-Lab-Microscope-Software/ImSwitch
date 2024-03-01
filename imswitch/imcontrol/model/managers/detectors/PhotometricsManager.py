@@ -177,6 +177,7 @@ class PhotometricsManager(DetectorManager):
             self.__chunkFramesSize = int(value)
             self.__chunkFrames = np.empty((self.__chunkFramesSize, *reversed(self.shape)))
             self.__frameIDs = np.empty((self.__chunkFramesSize))
+            self.__logger.info(f"Set buffer size to {self.__chunkFramesSize}")
         elif name == 'Set exposure time':
             self._setExposure(value)
             self._updatePropertiesFromCamera()
@@ -200,6 +201,7 @@ class PhotometricsManager(DetectorManager):
     def _setExposure(self, time):
         
         self._camera.exp_time = int(time * 1e6)
+        self._frameInterval = self._camera.exp_time
         
         newReadoutTime = float(self._camera.readout_time * 1e-6)
         super().setParameter('Real exposure time', float(self._camera.exp_time * 1e-6))

@@ -64,8 +64,8 @@ class PyMMCoreManager(SignalInterface):
                 devInfo[2]
             )
             self.__core.initializeDevice(devInfo[0])
-        except RuntimeError:
-            raise ValueError(f"Error in loading device \"{devInfo[0]}\", check the values of \"module\" and \"device\" in the configuration file (current values: {devInfo[1]}, {devInfo[2]})")
+        except Exception as e:
+            raise ValueError(f"Error in loading device \"{devInfo[0]}\", check the values of \"module\" and \"device\" in the configuration file (current values: {devInfo[1]}, {devInfo[2]}) ({e})")
     
     def unloadDevice(self, label: str) -> None:
         """ Tries to unload from the MMCore a previously loaded device (used for finalize() call)

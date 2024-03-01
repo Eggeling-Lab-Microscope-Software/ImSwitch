@@ -270,10 +270,10 @@ class HDF5Storer(Storer):
         if np.all(frameNumberWindow == 0):
             logger.warning(f"[REC:{detector.name}] No frame IDs were provided for {detector.name}.")
         elif not np.all(np.ediff1d(frameNumberWindow) == 1):
-            dbgPath = os.path.join(_debugLogDir, f"frame_id_differences_{detector.name}.txt")
             logger.error(f"[REC:{detector.name}] Frames lost. Frame interval: {detector.frameInterval} μs")
-            logger.error(f"[REC:{detector.name}] You can find the frame ID list in {dbgPath}")
-            np.savetxt(os.path.join(_debugLogDir, f"frame_id_differences_{detector.name}.txt"), np.ediff1d(frameNumberWindow), fmt="%d")
+            logger.error(f"[REC:{detector.name}] You can find the frame ID list in {_debugLogDir}")
+            np.savetxt(os.path.join(_debugLogDir, f"frame_id_{detector.name}.log"), frameNumberWindow, fmt="%d")
+            np.savetxt(os.path.join(_debugLogDir, f"frame_id_differences_{detector.name}.log"), np.ediff1d(frameNumberWindow), fmt="%d")
                     
                 
 class TiffStorer(Storer):
